@@ -82,13 +82,15 @@ jobs:
           # on-demand extras (e.g. positions-<date>-custom) are all picked up the same way, with
           # zero assumption about how many there are or what their suffixes are called. The
           # artifacts-list endpoint has no server-side prefix filter, so this is a client-side
-          # jq `startswith`. --paginate + --jq streams newline-delimited results per page, so
-          # this stays correct even once the repo has accumulated many pages of artifacts.
+          # jq `startswith`. `gh api --jq` only accepts a single filter-expression argument (no
+          # `--arg` support) - variable binding needs the standalone `jq` binary instead, piped
+          # from raw --paginate output (multiple concatenated JSON page bodies, which jq's
+          # default streaming input handles natively without --slurp).
           # De-duped by name (keep first id per name) to guard against a same-day manual re-run
           # of a chunk workflow producing two artifacts that share one name.
-          mapfile -t MATCHES < <(gh api "repos/${{ github.repository }}/actions/artifacts" \
-            --paginate --jq --arg prefix "$PREFIX" \
-            '.artifacts[] | select(.expired == false) | select(.name | startswith($prefix)) | "\(.id) \(.name)"' \
+          mapfile -t MATCHES < <(gh api "repos/${{ github.repository }}/actions/artifacts" --paginate \
+            | jq -r --arg prefix "$PREFIX" \
+                '.artifacts[] | select(.expired == false) | select(.name | startswith($prefix)) | "\(.id) \(.name)"' \
             | sort -k2 -u)
 
           if [ "${#MATCHES[@]}" -eq 0 ]; then
