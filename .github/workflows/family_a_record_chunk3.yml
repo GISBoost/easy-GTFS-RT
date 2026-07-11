@@ -1,0 +1,65 @@
+name: Family A — record chunk 3 (Łódź)
+
+on:
+  schedule:
+    # Europe/Warsaw local window 14:00-18:30. CRITICAL CHUNK — starts exactly at the
+    # afternoon peak's start (14:00); covers the whole afternoon peak (14:00-18:00) plus
+    # 30 min margin after. The 30-min overlap with chunk 2 (which records until 14:30) is
+    # the safety margin against this job's own start delay. CEST (summer, UTC+2) —
+    # current offset as of 2026-07. CET (winter, UTC+1) equivalent: "0 13 * * *". DST is
+    # NOT auto-compensated (no sleep-align step) — this cron must be edited by hand after
+    # each DST switch (last Sunday of March/October). Deliberately out of scope for FA-7 —
+    # see PR_easy-OTP_v07.md, section FA-7, "Ograniczenia", and this repo's CLAUDE.md.
+    - cron: "0 12 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    # Safety margin under GitHub's own 360-minute (6h) hard cap per job.
+    timeout-minutes: 340
+    steps:
+      - name: Checkout this repo (workflow + eventual artifact context)
+        uses: actions/checkout@v4
+
+      - name: Checkout easy-OTP (source of the family_a CLI, read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: GISBoost/easy-OTP
+          path: easy-otp-src
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compute today's local (Europe/Warsaw) date
+        id: date
+        run: echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('easy-otp-src/tools/family_a_reconstruction/requirements.txt') }}
+
+      - name: Install dependencies
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: pip install -r requirements.txt
+
+      - name: Record chunk 3
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: |
+          python -m family_a.cli record \
+            --url "${{ vars.LODZ_VEHICLE_POSITIONS_URL }}" \
+            --out-dir "../../../positions_${{ steps.date.outputs.date }}_chunk3" \
+            --duration-min 270 \
+            --interval-sec 60
+
+      - name: Upload recorded snapshots as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: positions-${{ steps.date.outputs.date }}-chunk3
+          path: positions_${{ steps.date.outputs.date }}_chunk3
+          retention-days: 2
