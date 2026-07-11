@@ -1,0 +1,155 @@
+name: Family A — build and notify (Łódź)
+
+on:
+  schedule:
+    # Europe/Warsaw local 22:15 — after FA-7's chunks (and any FA-9 on-demand extras) should be
+    # done for the day. CEST (summer, UTC+2) — current offset as of 2026-07. CET (winter,
+    # UTC+1) equivalent: "15 19 * * *". DST is NOT auto-compensated (no sleep-align step) — this
+    # cron must be edited by hand after each DST switch (last Sunday of March/October), same
+    # convention as FA-7's chunk workflows.
+    - cron: "15 20 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  build_and_notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write   # required for `gh release create` in this repo
+      actions: read      # required for `gh api .../actions/artifacts` (list + download zip) —
+                          # once any explicit `permissions:` block is present, unlisted scopes
+                          # drop to `none`, so this must be listed even though it looks implicit
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout easy-OTP (source of the family_a CLI, read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: GISBoost/easy-OTP
+          path: easy-otp-src
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compute today's local (Europe/Warsaw) date
+        id: date
+        run: echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('easy-otp-src/tools/family_a_reconstruction/requirements.txt') }}
+
+      - name: Install dependencies
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: pip install -r requirements.txt
+
+      - name: Download fresh static GTFS
+        run: curl -fsSL -o static_gtfs.zip "${{ vars.LODZ_STATIC_GTFS_URL }}"
+
+      - name: Collect today's recording artifacts (by name prefix, not a fixed count)
+        id: artifacts
+        run: |
+          set -euo pipefail
+          DATE="${{ steps.date.outputs.date }}"
+          PREFIX="positions-${DATE}-"
+          mkdir -p chunks
+
+          # List every non-expired artifact whose name starts with today's prefix - this is
+          # what makes the count dynamic: FA-7's default chunks (chunk1..chunk4) and any FA-9
+          # on-demand extras (e.g. positions-<date>-custom) are all picked up the same way, with
+          # zero assumption about how many there are or what their suffixes are called. The
+          # artifacts-list endpoint has no server-side prefix filter, so this is a client-side
+          # jq `startswith`. --paginate + --jq streams newline-delimited results per page, so
+          # this stays correct even once the repo has accumulated many pages of artifacts.
+          # De-duped by name (keep first id per name) to guard against a same-day manual re-run
+          # of a chunk workflow producing two artifacts that share one name.
+          mapfile -t MATCHES < <(gh api "repos/${{ github.repository }}/actions/artifacts" \
+            --paginate --jq --arg prefix "$PREFIX" \
+            '.artifacts[] | select(.expired == false) | select(.name | startswith($prefix)) | "\(.id) \(.name)"' \
+            | sort -k2 -u)
+
+          if [ "${#MATCHES[@]}" -eq 0 ]; then
+            echo "::error::No artifacts found matching prefix '${PREFIX}' for ${DATE} - did FA-7's chunks run today?"
+            exit 1
+          fi
+
+          DIRS=()
+          for ENTRY in "${MATCHES[@]}"; do
+            ID="${ENTRY%% *}"
+            NAME="${ENTRY#* }"
+            gh api "repos/${{ github.repository }}/actions/artifacts/${ID}/zip" > "${NAME}.zip"
+            unzip -q "${NAME}.zip" -d "chunks/${NAME}"
+            rm "${NAME}.zip"
+            DIRS+=("chunks/${NAME}")
+          done
+
+          echo "count=${#DIRS[@]}" >> "$GITHUB_OUTPUT"
+          # Space-separated list, consumed word-split by `match` below - safe here since our own
+          # artifact names never contain spaces.
+          echo "dirs=${DIRS[*]}" >> "$GITHUB_OUTPUT"
+          echo "Found ${#DIRS[@]} recording director$( [ ${#DIRS[@]} -eq 1 ] && echo y || echo ies ) for ${DATE}: ${DIRS[*]}"
+
+      - name: Match
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: |
+          set -euo pipefail
+          args=()
+          for d in ${{ steps.artifacts.outputs.dirs }}; do
+            args+=(--positions-dir "../../../${d}")
+          done
+          python -m family_a.cli match \
+            "${args[@]}" \
+            --static "../../../static_gtfs.zip" \
+            --out "matched_${{ steps.date.outputs.date }}.csv"
+
+      - name: Build
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: |
+          python -m family_a.cli build \
+            --matched "matched_${{ steps.date.outputs.date }}.csv" \
+            --static "../../../static_gtfs.zip" \
+            --out-prefix "../../../realized_${{ steps.date.outputs.date }}"
+
+      - name: Publish GitHub Release (in this repo — never in easy-OTP)
+        run: |
+          set -euo pipefail
+          DATE="${{ steps.date.outputs.date }}"
+          COUNT="${{ steps.artifacts.outputs.count }}"
+          gh release create "fa-recording-${DATE}" \
+            "realized_${DATE}_p50.zip" "realized_${DATE}_p85.zip" \
+            --title "Family A realized GTFS — Łódź — ${DATE}" \
+            --notes "Automated FA-7/FA-8 build. P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
+
+      - name: Notify WhatsApp (success)
+        if: success()
+        run: |
+          set -euo pipefail
+          DATE="${{ steps.date.outputs.date }}"
+          COUNT="${{ steps.artifacts.outputs.count }}"
+          P50_URL="https://github.com/${{ github.repository }}/releases/download/fa-recording-${DATE}/realized_${DATE}_p50.zip"
+          P85_URL="https://github.com/${{ github.repository }}/releases/download/fa-recording-${DATE}/realized_${DATE}_p85.zip"
+          TEXT=$(printf 'easy-OTP Family A (Lodz, %s) ready. %s recording director%s merged.\nP50: %s\nP85: %s' \
+            "${DATE}" "${COUNT}" "$([ "${COUNT}" = "1" ] && echo y || echo ies)" \
+            "${P50_URL}" "${P85_URL}")
+          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
+            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
+            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
+            --data-urlencode "text=${TEXT}"
+
+      - name: Notify WhatsApp (failure)
+        if: failure()
+        run: |
+          set -euo pipefail
+          TEXT="easy-OTP Family A (Lodz, ${{ steps.date.outputs.date }}) FAILED - check Actions log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
+            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
+            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
+            --data-urlencode "text=${TEXT}"
