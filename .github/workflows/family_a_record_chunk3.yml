@@ -2,15 +2,18 @@ name: Family A — record chunk 3 (Łódź)
 
 on:
   schedule:
-    # Europe/Warsaw local window 14:00-18:30. CRITICAL CHUNK — starts exactly at the
-    # afternoon peak's start (14:00); covers the whole afternoon peak (14:00-18:00) plus
-    # 30 min margin after. The 30-min overlap with chunk 2 (which records until 14:30) is
-    # the safety margin against this job's own start delay. CEST (summer, UTC+2) —
-    # current offset as of 2026-07. CET (winter, UTC+1) equivalent: "0 13 * * *". DST is
+    # Europe/Warsaw local window 13:30-18:30. CRITICAL CHUNK — starts 30 min before the
+    # afternoon peak (14:00-18:00) as a buffer against GitHub Actions' own start delay
+    # (observed: chunk4 started ~45 min late on 2026-07-11, more than the previous 30-min
+    # buffer this chunk had). Combined with chunk 2 (which records until 14:30), the
+    # effective delay tolerance before the 14:00 peak start would have a gap is now ~60
+    # min. Duration extended to 300 min (vs the other chunks' 270) to keep the same
+    # 18:30 end / post-peak margin despite the earlier start. CEST (summer, UTC+2) —
+    # current offset as of 2026-07. CET (winter, UTC+1) equivalent: "30 12 * * *". DST is
     # NOT auto-compensated (no sleep-align step) — this cron must be edited by hand after
     # each DST switch (last Sunday of March/October). Deliberately out of scope for FA-7 —
     # see PR_easy-OTP_v07.md, section FA-7, "Ograniczenia", and this repo's CLAUDE.md.
-    - cron: "0 12 * * *"
+    - cron: "30 11 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -54,7 +57,7 @@ jobs:
           python -m family_a.cli record \
             --url "${{ vars.LODZ_VEHICLE_POSITIONS_URL }}" \
             --out-dir "../../../positions_${{ steps.date.outputs.date }}_chunk3" \
-            --duration-min 270 \
+            --duration-min 300 \
             --interval-sec 60
 
       - name: Upload recorded snapshots as artifact

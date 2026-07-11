@@ -3,8 +3,10 @@ name: Family A — record chunk 2 (Łódź)
 on:
   schedule:
     # Europe/Warsaw local window 10:00-14:30. The morning peak (07:00-10:00) is already
-    # over before this chunk starts; its own tail (14:00-14:30) is the 30-min safety
-    # overlap protecting chunk 3's start against job-start delay. CEST (summer, UTC+2) —
+    # over before this chunk starts; its tail (13:30-14:30) now overlaps chunk 3's start
+    # (13:30, moved earlier 2026-07 after an observed ~45-min GH Actions start delay) —
+    # a 60-min safety overlap protecting the 14:00 peak start against job-start delay.
+    # CEST (summer, UTC+2) —
     # current offset as of 2026-07. CET (winter, UTC+1) equivalent: "0 9 * * *". DST is
     # NOT auto-compensated (no sleep-align step) — this cron must be edited by hand after
     # each DST switch (last Sunday of March/October). Deliberately out of scope for FA-7 —
