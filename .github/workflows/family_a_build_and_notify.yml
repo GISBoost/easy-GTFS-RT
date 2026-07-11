@@ -8,7 +8,16 @@ on:
     # cron must be edited by hand after each DST switch (last Sunday of March/October), same
     # convention as FA-7's chunk workflows.
     - cron: "15 20 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      date:
+        description: >-
+          Override RECORDING_DATE (YYYY-MM-DD) for a manual run — leave empty to use today's
+          Europe/Warsaw date. Useful when testing after local midnight has rolled over past the
+          day whose chunks you actually want to build (the schedule trigger never sets this, so
+          the cron run is unaffected).
+        required: false
+        default: ""
 
 jobs:
   build_and_notify:
@@ -39,7 +48,13 @@ jobs:
 
       - name: Compute today's local (Europe/Warsaw) date
         id: date
-        run: echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+        run: |
+          OVERRIDE="${{ github.event.inputs.date }}"
+          if [ -n "$OVERRIDE" ]; then
+            echo "date=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          else
+            echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
