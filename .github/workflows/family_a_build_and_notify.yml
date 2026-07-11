@@ -1,4 +1,4 @@
-name: Family A — build and notify (Łódź)
+name: Łódź — build
 
 on:
   schedule:
@@ -133,17 +133,17 @@ jobs:
           python -m family_a.cli build \
             --matched "matched_${{ steps.date.outputs.date }}.csv" \
             --static "../../../static_gtfs.zip" \
-            --out-prefix "../../../realized_${{ steps.date.outputs.date }}"
+            --out-prefix "../../../lodz_realized_${{ steps.date.outputs.date }}"
 
       - name: Publish GitHub Release (in this repo — never in easy-OTP)
         run: |
           set -euo pipefail
           DATE="${{ steps.date.outputs.date }}"
           COUNT="${{ steps.artifacts.outputs.count }}"
-          gh release create "fa-recording-${DATE}" \
-            "realized_${DATE}_p50.zip" "realized_${DATE}_p85.zip" \
-            --title "Family A realized GTFS — Łódź — ${DATE}" \
-            --notes "Automated FA-7/FA-8 build. P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
+          gh release create "lodz-realized-${DATE}" \
+            "lodz_realized_${DATE}_p50.zip" "lodz_realized_${DATE}_p85.zip" \
+            --title "Łódź — ${DATE} — realized GTFS" \
+            --notes "Automated build. P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
 
       - name: Notify WhatsApp (success)
         if: success()
@@ -151,9 +151,9 @@ jobs:
           set -euo pipefail
           DATE="${{ steps.date.outputs.date }}"
           COUNT="${{ steps.artifacts.outputs.count }}"
-          P50_URL="https://github.com/${{ github.repository }}/releases/download/fa-recording-${DATE}/realized_${DATE}_p50.zip"
-          P85_URL="https://github.com/${{ github.repository }}/releases/download/fa-recording-${DATE}/realized_${DATE}_p85.zip"
-          TEXT=$(printf 'easy-OTP Family A (Lodz, %s) ready. %s recording director%s merged.\nP50: %s\nP85: %s' \
+          P50_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}/lodz_realized_${DATE}_p50.zip"
+          P85_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}/lodz_realized_${DATE}_p85.zip"
+          TEXT=$(printf 'Lodz GTFS-RT (%s) ready. %s recording director%s merged.\nP50: %s\nP85: %s' \
             "${DATE}" "${COUNT}" "$([ "${COUNT}" = "1" ] && echo y || echo ies)" \
             "${P50_URL}" "${P85_URL}")
           curl -sS -G "https://api.callmebot.com/whatsapp.php" \
@@ -165,7 +165,7 @@ jobs:
         if: failure()
         run: |
           set -euo pipefail
-          TEXT="easy-OTP Family A (Lodz, ${{ steps.date.outputs.date }}) FAILED - check Actions log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="Lodz GTFS-RT (${{ steps.date.outputs.date }}) build FAILED - check Actions log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -sS -G "https://api.callmebot.com/whatsapp.php" \
             --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
             --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
