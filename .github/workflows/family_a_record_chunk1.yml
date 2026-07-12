@@ -2,27 +2,42 @@ name: Łódź — record chunk 1
 
 on:
   schedule:
-    # Europe/Warsaw local window 06:00-10:30, covers the morning peak (07:00-10:00) with
-    # an hour of slack before it starts. Minute offset is deliberately NOT :00 - GitHub's own
-    # docs warn schedule triggers see the worst congestion/delay at the top of the hour
+    # Europe/Warsaw local window 05:00-10:30, covers the morning peak (07:00-10:00) with
+    # TWO hours of slack before it starts - widened from the original one-hour buffer
+    # (06:00 start) on 2026-07-12, decision Michał, after this exact chunk's schedule
+    # trigger was observed 2h31m late that morning (see the "0 4 * * *" -> 2h31m-late
+    # incident referenced below) and actually left a ~90-minute hole in the recorded
+    # morning peak (~07:00-08:31 uncovered - no other chunk overlaps that window). Two
+    # hours of lead-in absorbs a repeat of that same delay almost entirely. Duration
+    # extended from 270 to 330 min to keep the same 10:30 end (preserves the 30-min
+    # overlap with chunk 2's own 10:00 start - unrelated to this change, don't shrink it).
+    # This does NOT guarantee zero gap - GitHub's schedule trigger has no documented upper
+    # bound on delay at any tier - it reduces the odds/size of a repeat, it doesn't
+    # eliminate the underlying platform limitation.
+    # Minute offset is deliberately NOT :00 - GitHub's own docs warn schedule triggers see
+    # the worst congestion/delay at the top of the hour
     # ("High load times include the start of every hour... schedule your workflow to run at
     # a different time of the hour"), and this was confirmed directly on this repo: the old
     # "0 4 * * *" run on 2026-07-12 was created 2h31m late (04:00->06:31 UTC), with the
     # run->job-start gap itself only ~3s - i.e. 100% of the delay was GitHub's scheduler, not
-    # runner queueing. This offset doesn't change the intended ~06:00 start, just avoids :00.
+    # runner queueing.
     # CEST (summer, UTC+2) — current offset as of 2026-07.
-    # CET (winter, UTC+1) equivalent: "6 5 * * *". DST is NOT auto-compensated (no
+    # CET (winter, UTC+1) equivalent: "6 4 * * *". DST is NOT auto-compensated (no
     # sleep-align step) — this cron must be edited by hand after each DST switch (last
     # Sunday of March/October). Deliberately out of scope for FA-7 — see
     # PR_easy-OTP_v07.md, section FA-7, "Ograniczenia", and this repo's CLAUDE.md.
-    - cron: "6 4 * * *"
+    - cron: "6 3 * * *"
   workflow_dispatch: {}
 
 jobs:
   record:
     runs-on: ubuntu-latest
-    # Safety margin under GitHub's own 360-minute (6h) hard cap per job.
-    timeout-minutes: 340
+    # Tighter margin than the other chunks (only 30 min under the 6h hard cap, vs. 60-100
+    # min elsewhere) - a direct consequence of extending duration-min to 330 to widen this
+    # chunk's morning-peak buffer (see the `schedule:` comment above) while GitHub's 360-min
+    # hard cap per job doesn't move. Still comfortable in absolute terms: checkout/setup/
+    # cache/upload steps here are lightweight (low single-digit minutes total, warm cache).
+    timeout-minutes: 355
     steps:
       - name: Checkout this repo (workflow + eventual artifact context)
         uses: actions/checkout@v4
@@ -59,7 +74,7 @@ jobs:
           python -m family_a.cli record \
             --url "${{ vars.LODZ_VEHICLE_POSITIONS_URL }}" \
             --out-dir "../../../positions_${{ steps.date.outputs.date }}_chunk1" \
-            --duration-min 270 \
+            --duration-min 330 \
             --interval-sec 60
 
       - name: Upload recorded snapshots as artifact
