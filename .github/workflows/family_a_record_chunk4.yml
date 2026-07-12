@@ -4,13 +4,18 @@ on:
   schedule:
     # Europe/Warsaw local window 18:00-22:00. Rest of the evening, low stakes — the
     # afternoon peak has already ended by the time this starts, and chunk 3 already
-    # covers past 18:00 via its own 30-min overlap. CEST (summer, UTC+2) — current
-    # offset as of 2026-07. CET (winter, UTC+1) equivalent: "0 17 * * *". DST is NOT
+    # covers past 18:00 via its own 30-min overlap. Minute offset is deliberately NOT
+    # :00 - GitHub's own docs warn schedule triggers see the worst congestion/delay at
+    # the top of the hour; this exact cron ("0 16 * * *") was observed 47m51s late on
+    # 2026-07-11 (16:00->16:47 UTC, with run->job-start itself only ~2s - all of that
+    # delay was GitHub's scheduler). Doesn't change the intended ~18:00 start, just
+    # avoids :00. CEST (summer, UTC+2) — current
+    # offset as of 2026-07. CET (winter, UTC+1) equivalent: "17 17 * * *". DST is NOT
     # auto-compensated (no sleep-align step) — this cron must be edited by hand after
     # each DST switch (last Sunday of March/October). Deliberately out of scope for
     # FA-7 — see PR_easy-OTP_v07.md, section FA-7, "Ograniczenia", and this repo's
     # CLAUDE.md.
-    - cron: "0 16 * * *"
+    - cron: "17 16 * * *"
   workflow_dispatch: {}
 
 jobs:
