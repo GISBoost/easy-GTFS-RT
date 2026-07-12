@@ -25,14 +25,14 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
 
 ```
 06:00 ───────────────────────────────────────────────────────────────── 22:00  (Europe/Warsaw)
- chunk1 [06:00–10:30]
-        chunk2 [10:00–14:30]
-                    chunk3 [13:30–18:30]
-                                    chunk4 [18:00–22:00]
-                                                          ↓ (workflow_run, right after chunk4 finishes)
-                                                     build_and_notify
-                                                          → GitHub Release (this repo)
-                                                          → WhatsApp message (CallMeBot)
+ chunk1 [05:00–10:30]
+    chunk2 [10:00–14:30]
+                chunk3 [13:30–18:30]
+                                chunk4 [18:00–22:00]
+                                                      ↓ (workflow_run, right after chunk4 finishes)
+                                                 build_and_notify
+                                                      → GitHub Release (this repo)
+                                                      → WhatsApp message (CallMeBot)
 ```
 
 1. **Four recording workflows** (`family_a_record_chunk{1..4}.yml`) each run `family_a record`
@@ -40,9 +40,19 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
    `.pb` snapshots as an artifact named `positions-<YYYY-MM-DD>-chunk{N}`. Chunk windows and
    durations are deliberately uneven and overlapping — they're built around the morning
    (7:00–10:00) and afternoon (14:00–18:00) transit peaks, with extra buffer where GitHub
-   Actions' own schedule jitter (observed up to ~45 min late in practice) could otherwise eat
-   into a peak window. **Don't rebalance these into equal thirds/quarters** — the uneven split
-   is intentional, see the comments in each chunk workflow.
+   Actions' own schedule jitter could otherwise eat into a peak window. **Don't rebalance these
+   into equal thirds/quarters** — the uneven split is intentional, see the comments in each
+   chunk workflow.
+
+   **GitHub's `schedule:` trigger is best-effort, not guaranteed**, and is documented to be
+   most congested at the top of the hour — every `cron:` here deliberately avoids `:00`/`:30`
+   for that reason. Even so, delays happen and aren't bounded: on 2026-07-12, chunk1's trigger
+   (then still at `:00`) fired 2h31m late, confirmed via the GitHub API to be 100% scheduler
+   dispatch delay (the job itself started ~3s after the run was created — zero runner-queue
+   delay), and left a real gap in that morning's peak recording. chunk1's buffer was widened
+   from 1h to 2h lead-in afterward (05:00 start instead of 06:00) to better absorb a repeat.
+   This mitigates the risk, it does not eliminate it — a large enough delay can still leave a
+   gap, and there is no configuration that guarantees otherwise on this trigger type.
 2. **`family_a_build_and_notify.yml`** ("Łódź — build") runs once a day, after the last chunk
    finishes:
    - Discovers **all** of that day's recording artifacts by **name prefix**
