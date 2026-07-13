@@ -1,0 +1,48 @@
+name: Family A — phone recording healthcheck
+
+on:
+  # Runs once daily, shortly before TX-4's 22:15 Europe/Warsaw build, so a missing
+  # positions-raw-<date> release (i.e. TX-2's recording service or TX-3's evening sweep silently
+  # failed on the phone) is caught and alerted on before TX-4 fails on it anyway. A midday check
+  # was deliberately not added: TX-3's sweep only runs at 22:10, so a midday run would almost
+  # always correctly report "nothing yet" — that's not useful signal, it's just noise. Confirmed
+  # with Michal (2026-07-13): one run per day, 21:00 Europe/Warsaw.
+  schedule:
+    - cron: "0 19 * * *"   # 21:00 CEST (summer, UTC+2). GitHub Actions cron has no DST awareness,
+                           # so this needs a manual flip to "0 20 * * *" (21:00 CET, winter,
+                           # UTC+1) when Europe/Warsaw switches off summer time, and back again in
+                           # spring — see fix/tx4-cron-dst-offset for the same class of bug.
+  workflow_dispatch: {}
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Compute today's local (Europe/Warsaw) date
+        id: date
+        run: echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Check for today's raw-recording release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="positions-raw-${{ steps.date.outputs.date }}"
+          ASSET_COUNT="$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets | length' 2>/dev/null || echo 0)"
+          if [ "$ASSET_COUNT" -gt 0 ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Alert if missing
+        if: steps.check.outputs.found == 'false'
+        run: |
+          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
+            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
+            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
+            --data-urlencode "text=easy-GTFS-RT (phone): no raw recording found for ${{ steps.date.outputs.date }} yet - check the phone."
