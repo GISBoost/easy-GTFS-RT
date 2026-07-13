@@ -162,15 +162,47 @@ jobs:
           from pathlib import Path
           from datetime import datetime
 
+          def parse_snapshot_name(name):
+              # Deliberate inline duplicate of family_a.recorder.parse_snapshot_filename - this
+              # script runs standalone from the repo root (no working-directory change into
+              # family_a_reconstruction, to avoid extra relative-path juggling on top of the
+              # raw/<dir> paths the collect step already produces). Same precedent as family_a
+              # itself deliberately duplicating RT-2's recorder rather than importing it (see
+              # that module's docstring) - keep this in sync by hand if the snapshot filename
+              # format (snapshot_YYYYmmdd-HHMMSS.pb) ever changes.
+              stem = name[:-3] if name.endswith(".pb") else name
+              prefix = "snapshot_"
+              if not stem.startswith(prefix):
+                  return None
+              try:
+                  return datetime.strptime(stem[len(prefix):], "%Y%m%d-%H%M%S")
+              except ValueError:
+                  return None
+
           intervals = []
           for d in sys.argv[1:]:
-              manifest = Path(d) / "recording.json"
-              if not manifest.exists():
-                  print(f"::warning::no recording.json in {d}, excluded from coverage summary", file=sys.stderr)
-                  continue
-              data = json.loads(manifest.read_text())
-              start = datetime.fromisoformat(data["started_at"])
-              stop = datetime.fromisoformat(data["stopped_at"])
+              directory = Path(d)
+              manifest = directory / "recording.json"
+              if manifest.exists():
+                  data = json.loads(manifest.read_text())
+                  start = datetime.fromisoformat(data["started_at"])
+                  stop = datetime.fromisoformat(data["stopped_at"])
+              else:
+                  # recording.json is only written from a `finally:` block in family_a.cli's
+                  # `record` command - a SIGKILL (Android/runit killing the process, exactly the
+                  # scenario TX-2's self-healing loop exists to recover from) skips it entirely,
+                  # even though the snapshot_*.pb files polled before the kill are still on disk
+                  # and still valid input to `match`. Fall back to those filenames' own embedded
+                  # timestamps instead of losing this directory's time range altogether.
+                  timestamps = sorted(
+                      dt for dt in (parse_snapshot_name(p.name) for p in directory.glob("snapshot_*.pb"))
+                      if dt is not None
+                  )
+                  if not timestamps:
+                      print(f"::warning::no recording.json and no parseable snapshot_*.pb filenames in {d}, excluded from coverage summary", file=sys.stderr)
+                      continue
+                  print(f"::notice::no recording.json in {d} (likely killed mid-recording) - coverage derived from {len(timestamps)} snapshot filenames instead", file=sys.stderr)
+                  start, stop = timestamps[0], timestamps[-1]
               intervals.append((start, stop))
 
           intervals.sort()
