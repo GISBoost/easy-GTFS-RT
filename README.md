@@ -52,20 +52,29 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
    delay), and left a real gap in that morning's peak recording. chunk1's buffer was widened
    from 1h to 2h lead-in afterward (05:00 start instead of 06:00) to better absorb a repeat.
    This mitigates the risk, it does not eliminate it — a large enough delay can still leave a
-   gap, and there is no configuration that guarantees otherwise on this trigger type.
+   gap, and there is no configuration that guarantees otherwise on this trigger type. **A gap
+   like that one is no longer silent**, though — see the "Actual recorded coverage" point below;
+   it would now show up directly in the Release/WhatsApp output instead of requiring an Actions
+   log check.
 2. **`family_a_build_and_notify.yml`** ("Łódź — build") runs once a day, after the last chunk
    finishes:
    - Discovers **all** of that day's recording artifacts by **name prefix**
      (`positions-<date>-`), via the GitHub REST API — never a hardcoded chunk count. This is
      what lets the pipeline degrade gracefully (fewer chunks that day) or, later, pick up an
      on-demand custom recording under the same prefix, with zero workflow changes.
+   - Reads each chunk's `recording.json` manifest (written by `family_a record` itself) to
+     compute the **actual recorded coverage** — real, merged start/stop times (e.g.
+     `08:32-11:52, 12:16-16:16`), not the nominal cron windows — so a schedule-trigger delay
+     shows up as a visible gap in the Release notes and WhatsApp message instead of being
+     assumed away.
    - Downloads a fresh static GTFS and runs `family_a match` (merging every discovered
      directory) then `family_a build`, producing P50 (median) and P85 (85th percentile)
      corrected GTFS zips.
-   - Publishes both as a GitHub Release in **this** repo (tag `lodz-realized-<date>`), and
-     sends one WhatsApp message via [CallMeBot](https://www.callmebot.com/) with the direct
-     download links — or a failure message if anything broke, so a bad day doesn't just show
-     up as silence.
+   - Publishes the P50/P85 zips **and that day's static GTFS** as a GitHub Release in **this**
+     repo (tag `lodz-realized-<date>`), and sends one WhatsApp message via
+     [CallMeBot](https://www.callmebot.com/) with the direct P50/P85 download links and the
+     recorded-coverage summary — or a failure message if anything broke, so a bad day doesn't
+     just show up as silence.
 
 ### Why the build trigger isn't a simple fixed-time schedule
 
@@ -143,7 +152,16 @@ for that date already exists.
   data feed has been observed to republish with a shifted `trip_id` generation between
   recording sessions, and reusing a stale static feed against newer recordings silently
   produces a suspiciously high `unknown_shape` reject count in `match`'s output instead of an
-  error. If that ever shows up, it's this, not a pipeline bug.
+  error. If that ever shows up, it's this, not a pipeline bug. Since 2026-07-13, the exact
+  static GTFS used for a given day's `match`/`build` is archived as a third asset on that day's
+  Release (`lodz_static_gtfs_<date>.zip`) — precisely so a future comparison between two days'
+  realized GTFS isn't invalidated by this same drift.
+- **Recorded-coverage times come from each chunk's own `recording.json` manifest**
+  (`started_at`/`stopped_at`, written by `family_a record`), not from a live poll log — so a
+  chunk that ran but produced zero/`failed` snapshots throughout would still report as
+  "covered" for that time range. This matches what the coverage summary is meant to answer
+  ("was a recording job actually running then"), not "how much clean data came back" — the
+  latter is what `match`'s own reject-count output is for.
 
 ## Where the actual logic lives
 

@@ -150,6 +150,52 @@ jobs:
           echo "dirs=${DIRS[*]}" >> "$GITHUB_OUTPUT"
           echo "Found ${#DIRS[@]} recording director$( [ ${#DIRS[@]} -eq 1 ] && echo y || echo ies ) for ${DATE}: ${DIRS[*]}"
 
+      - name: Compute actual recorded time coverage
+        id: coverage
+        if: steps.existing_release.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          python3 - ${{ steps.artifacts.outputs.dirs }} >> "$GITHUB_OUTPUT" <<'PYEOF'
+          # Merges each chunk's actual (not nominal/scheduled) start/stop into contiguous
+          # ranges, so a schedule-trigger delay (this repo has already seen delays over 2h -
+          # see the record-chunk workflows' comments) shows up as a visible gap instead of
+          # being silently assumed away by reporting only the intended cron windows.
+          import json
+          import sys
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          UTC = ZoneInfo("UTC")
+          WARSAW = ZoneInfo("Europe/Warsaw")
+
+          intervals = []
+          for d in sys.argv[1:]:
+              manifest = Path(d) / "recording.json"
+              if not manifest.exists():
+                  print(f"::warning::no recording.json in {d}, excluded from coverage summary", file=sys.stderr)
+                  continue
+              data = json.loads(manifest.read_text())
+              # started_at/stopped_at are written by family_a's recorder.write_manifest() as
+              # datetime.now() on the recording runner - naive, and NOT Europe/Warsaw: GitHub
+              # -hosted runners default to UTC, and only the separate "compute today's date"
+              # step in each chunk workflow sets TZ=Europe/Warsaw (scoped to that command only).
+              start = datetime.fromisoformat(data["started_at"]).replace(tzinfo=UTC).astimezone(WARSAW)
+              stop = datetime.fromisoformat(data["stopped_at"]).replace(tzinfo=UTC).astimezone(WARSAW)
+              intervals.append((start, stop))
+
+          intervals.sort()
+          merged = []
+          for start, stop in intervals:
+              if merged and start <= merged[-1][1]:
+                  merged[-1] = (merged[-1][0], max(merged[-1][1], stop))
+              else:
+                  merged.append((start, stop))
+
+          ranges = ", ".join(f"{s:%H:%M}-{e:%H:%M}" for s, e in merged) if merged else "unknown"
+          print(f"coverage={ranges}")
+          PYEOF
+
       - name: Match
         id: match
         if: steps.existing_release.outputs.exists != 'true'
@@ -200,10 +246,17 @@ jobs:
           COUNT="${{ steps.artifacts.outputs.count }}"
           MATCHED="${{ steps.match.outputs.matched_count }}"
           CORRECTED="${{ steps.build.outputs.segments_corrected }}"
+          COVERAGE="${{ steps.coverage.outputs.coverage }}"
+          # Renamed (not uploaded as-is, and not via `gh release create`'s `path#label` syntax,
+          # which only changes the displayed label, not the downloaded filename) so every day's
+          # static feed downloads under a distinct, dated name instead of all colliding on the
+          # generic local filename `static_gtfs.zip` once saved locally.
+          cp static_gtfs.zip "lodz_static_gtfs_${DATE}.zip"
           gh release create "lodz-realized-${DATE}" \
             "lodz_realized_${DATE}_p50.zip" "lodz_realized_${DATE}_p85.zip" \
+            "lodz_static_gtfs_${DATE}.zip" \
             --title "Łódź — ${DATE} — realized GTFS" \
-            --notes "Automated build (on-demand run). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
+            --notes "Automated build (on-demand run). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Actual recorded coverage: ${COVERAGE}. Static GTFS as downloaded and used for this day's match/build also attached, for comparison across days if the source agency's trip_id generation drifts (see FA-6). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
 
       - name: Notify WhatsApp (success)
         if: success() && steps.existing_release.outputs.exists != 'true'
@@ -213,10 +266,11 @@ jobs:
           COUNT="${{ steps.artifacts.outputs.count }}"
           MATCHED="${{ steps.match.outputs.matched_count }}"
           CORRECTED="${{ steps.build.outputs.segments_corrected }}"
+          COVERAGE="${{ steps.coverage.outputs.coverage }}"
           P50_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}/lodz_realized_${DATE}_p50.zip"
           P85_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}/lodz_realized_${DATE}_p85.zip"
-          TEXT=$(printf 'Lodz GTFS-RT (%s) ready [on-demand build]. %s recording director%s merged, %s observations matched, %s segments corrected.\nP50: %s\nP85: %s' \
-            "${DATE}" "${COUNT}" "$([ "${COUNT}" = "1" ] && echo y || echo ies)" \
+          TEXT=$(printf 'Lodz GTFS-RT (%s) ready [on-demand build]. Coverage: %s\n%s recording director%s merged, %s observations matched, %s segments corrected.\nP50: %s\nP85: %s' \
+            "${DATE}" "${COVERAGE}" "${COUNT}" "$([ "${COUNT}" = "1" ] && echo y || echo ies)" \
             "${MATCHED}" "${CORRECTED}" \
             "${P50_URL}" "${P85_URL}")
           curl -sS -G "https://api.callmebot.com/whatsapp.php" \
