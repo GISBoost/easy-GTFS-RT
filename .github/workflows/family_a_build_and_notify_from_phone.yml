@@ -16,7 +16,11 @@ on:
   # `workflow_dispatch` date override below for manual recovery, and by TX-6 (separate, later
   # milestone) monitoring for a missing release.
   schedule:
-    - cron: "15 21 * * *"   # 22:15 CEST / 21:15 UTC — adjust if this drifts across DST boundaries
+    - cron: "15 20 * * *"   # 22:15 CEST (summer, UTC+2). GitHub Actions cron has no DST
+                            # awareness, so this needs a manual flip to "15 21 * * *" (22:15 CET,
+                            # winter, UTC+1) when Europe/Warsaw switches off summer time, and back
+                            # again in spring — 21:15 UTC (the previous value here) is 23:15 CEST,
+                            # not 22:15, which was a real off-by-one-hour bug caught in review.
   workflow_dispatch:
     inputs:
       date:
