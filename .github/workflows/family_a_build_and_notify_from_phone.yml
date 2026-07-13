@@ -279,6 +279,28 @@ jobs:
             --title "Łódź — ${DATE} — realized GTFS (phone)" \
             --notes "Automated build from phone-recorded data (TX-2/TX-3). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Actual recorded coverage: ${COVERAGE}. Static GTFS as downloaded and used for this day's match/build also attached, for comparison across days if the source agency's trip_id generation drifts (see FA-6). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
 
+      - name: Delete the phone's now-consumed raw-data release
+        # Unlike FA-7 (whose raw artifacts self-expire via retention-days: 2), TX-3 uploads raw
+        # recordings as a GitHub Release via plain curl (to avoid installing `gh` on the phone),
+        # and Releases have no built-in expiration - left alone, one would accumulate per day
+        # forever. Safe to delete only once the corrected GTFS this raw data feeds into has
+        # actually been published (Publish already succeeded by this point in the job).
+        # continue-on-error + non-fatal handling below: this is best-effort tidying, not core
+        # functionality - a failure here must not mark the whole run as failed (which would both
+        # send a misleading WhatsApp "FAILED" message for a build that actually succeeded, and -
+        # since the idempotency guard would then see today's final release already exists on any
+        # retry - permanently skip retrying the deletion too).
+        if: success() && steps.existing_release.outputs.exists != 'true'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          TAG="positions-raw-${{ steps.date.outputs.date }}"
+          if gh release delete "$TAG" --yes --cleanup-tag; then
+            echo "Deleted raw-data release ${TAG} (superseded by lodz-realized-${{ steps.date.outputs.date }}-phone)"
+          else
+            echo "::warning::Failed to delete raw-data release ${TAG} - not fatal, safe to clean up manually or leave for a later run"
+          fi
+
       - name: Notify WhatsApp (success)
         if: success() && steps.existing_release.outputs.exists != 'true'
         run: |
