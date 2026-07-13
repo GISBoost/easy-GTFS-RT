@@ -78,13 +78,19 @@ worth knowing before touching this workflow:
 - The `workflow_run` trigger only fires a build for chunk4's **scheduled** runs (gated by
   `github.event.workflow_run.event == 'schedule'`), not manual/test runs — otherwise testing
   chunk4 by hand would trigger a premature build with an incomplete day.
-- `schedule:` on `build_and_notify` itself is kept only as a **late (23:45 CEST) end-of-day
-  fallback**, for the rare case chunk4 never completes at all that day. It's deliberately late
-  so it doesn't win the race against `workflow_run` under normal conditions.
+- `build_and_notify` has **no time-based fallback of its own** anymore. A `schedule:` 23:45 CEST
+  end-of-day cron used to fill that role, but it was removed on 2026-07-13 after GitHub's
+  schedule-queue delay pushed one such run past local midnight: it computed "today" as the
+  *next* day (whose chunks hadn't recorded yet) and failed with a spurious "no artifacts found"
+  right after `workflow_run` had already published that day's release successfully. The cron
+  also routinely fired too late to be useful even when it didn't fail outright. If `workflow_run`
+  doesn't fire for a given day, run **`family_a_build_and_notify_on_demand.yml`** by hand
+  instead — same steps, `workflow_dispatch`-only, same `date` override.
 - An idempotency guard (`gh release view` before doing any work) makes a same-day
   double-trigger a clean no-op instead of a duplicate-release-tag failure, and
-  `concurrency: group: family-a-build-and-notify` (queue, don't cancel) closes the small
-  check-then-act race window between two near-simultaneous triggers.
+  `concurrency: group: family-a-build-and-notify` (queue, don't cancel) — shared with the
+  on-demand workflow too — closes the small check-then-act race window between two
+  near-simultaneous triggers.
 
 ## Repository configuration
 
@@ -114,10 +120,11 @@ cron to fire:
 
 - Run any `family_a_record_chunk{1..4}.yml` by hand from the Actions tab to produce a test
   artifact for today.
-- Run `family_a_build_and_notify.yml` by hand; it accepts an optional `date` input
-  (`YYYY-MM-DD`) to target a specific day's recording instead of today — useful when testing
-  shortly after local midnight, when "today" would otherwise no longer match last night's
-  chunk artifacts.
+- Run `family_a_build_and_notify.yml` or `family_a_build_and_notify_on_demand.yml` by hand; both
+  accept an optional `date` input (`YYYY-MM-DD`) to target a specific day's recording instead of
+  today — useful when running shortly after local midnight, when "today" would otherwise no
+  longer match last night's chunk artifacts. The on-demand version is also the way to trigger a
+  build at all if `workflow_run` never fired for that day (see above).
 
 A manually-triggered build does **not** get skipped by the idempotency guard unless a Release
 for that date already exists.

@@ -1,42 +1,43 @@
 name: Łódź — build
 
 on:
-  # Primary trigger: fires the moment chunk4's SCHEDULED run actually finishes, whatever real
-  # time that turns out to be - eliminates the race against chunk4's own start-delay entirely,
-  # instead of guessing a fixed buffer after its nominal end. Filtered to `event == 'schedule'`
-  # in the job-level `if:` below so a manual/test run of chunk4 (workflow_dispatch) never
-  # auto-triggers a build with that day's data still incomplete.
+  # Primary (and, as of the 2026-07-13 incident below, only automatic) trigger: fires the
+  # moment chunk4's SCHEDULED run actually finishes, whatever real time that turns out to be -
+  # eliminates the race against chunk4's own start-delay entirely, instead of guessing a fixed
+  # buffer after its nominal end. Filtered to `event == 'schedule'` in the job-level `if:` below
+  # so a manual/test run of chunk4 (workflow_dispatch) never auto-triggers a build with that
+  # day's data still incomplete.
+  #
+  # A `schedule:` end-of-day fallback (23:45 CEST) used to sit here as a safety net for the rare
+  # case chunk4 never completes at all. Removed on 2026-07-13 (Michał decision) after it caused
+  # a spurious failure: GitHub's schedule queue delayed that run past local midnight, so
+  # `TZ=Europe/Warsaw date +%F` resolved to the *next* day - a day whose chunks hadn't recorded
+  # yet - and it failed on "no artifacts found" right after the workflow_run trigger had already
+  # published that day's release successfully minutes earlier. The fallback routinely ran too
+  # late to be useful anyway. `family_a_build_and_notify_on_demand.yml` (workflow_dispatch-only,
+  # with a `date` override) now covers this case instead - run it by hand if workflow_run never
+  # fires for a given day.
   workflow_run:
     workflows: ["Łódź — record chunk 4"]
     types: [completed]
-  schedule:
-    # Europe/Warsaw local 23:45 - deliberately late: this is now only an end-of-day safety net
-    # for the rare case chunk4's SCHEDULED run doesn't complete at all that day (workflow_run
-    # above never fires). It must stay well after any plausible chunk4 delay so it does NOT
-    # normally win the race and claim that day's release tag before workflow_run does - if it
-    # fired first with an incomplete artifact set, the idempotency guard below would then skip
-    # the later, complete workflow_run-triggered build outright. CEST (summer, UTC+2) — current
-    # offset as of 2026-07. CET (winter, UTC+1) equivalent: "45 22 * * *". DST is NOT
-    # auto-compensated, same convention as FA-7's chunk workflows.
-    - cron: "45 21 * * *"
   workflow_dispatch:
     inputs:
       date:
         description: >-
           Override RECORDING_DATE (YYYY-MM-DD) for a manual run — leave empty to use today's
           Europe/Warsaw date. Useful when testing after local midnight has rolled over past the
-          day whose chunks you actually want to build (the schedule trigger never sets this, so
-          the cron run is unaffected).
+          day whose chunks you actually want to build.
         required: false
         default: ""
 
 concurrency:
-  # Serializes any same-time overlap between the workflow_run trigger and the schedule fallback
-  # (or two rapid workflow_run firings) - without this, both could pass the idempotency guard's
-  # `gh release view` check before either has created the release (classic check-then-act race),
-  # and the second `gh release create` would fail on the now-existing tag with a spurious failure
-  # notification. cancel-in-progress: false queues the second run instead of cancelling the
-  # first, so it still completes and then correctly no-ops via the idempotency guard.
+  # Serializes any same-time overlap between this workflow's own triggers (workflow_run and a
+  # manual workflow_dispatch run) and the separate on-demand workflow, which shares this same
+  # group - without this, two runs could both pass the idempotency guard's `gh release view`
+  # check before either has created the release (classic check-then-act race), and the second
+  # `gh release create` would fail on the now-existing tag with a spurious failure notification.
+  # cancel-in-progress: false queues the second run instead of cancelling the first, so it still
+  # completes and then correctly no-ops via the idempotency guard.
   group: family-a-build-and-notify
   cancel-in-progress: false
 
@@ -44,8 +45,8 @@ jobs:
   build_and_notify:
     # Only react to a workflow_run event when the chunk4 run it fired from was itself a
     # SCHEDULED run - a manual/test run of chunk4 must never auto-trigger this build with a
-    # possibly-incomplete artifact set for the day. schedule/workflow_dispatch triggers on this
-    # workflow itself are always allowed through (no workflow_run context to check there).
+    # possibly-incomplete artifact set for the day. A workflow_dispatch trigger on this workflow
+    # itself is always allowed through (no workflow_run context to check there).
     # Note: `types: [completed]` fires regardless of chunk4's conclusion (success/failure/
     # cancelled), intentionally - even a failed/partial chunk4 means "today's recording is as
     # done as it's going to get", and the artifact-prefix discovery below already tolerates
