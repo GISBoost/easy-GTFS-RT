@@ -1,0 +1,233 @@
+name: Łódź — build (on-demand)
+
+on:
+  # Manual-only trigger. This is the backup path for when the scheduled build
+  # (family_a_build_and_notify.yml) can't be relied on to fire before local midnight - e.g.
+  # chunk4's recording finished too close to 23:45 Europe/Warsaw for the scheduled fallback
+  # cron to still catch it that day. Run this by hand from the Actions tab once the day's
+  # chunks (and any FA-9 extras) are done recording.
+  workflow_dispatch:
+    inputs:
+      date:
+        description: >-
+          Override RECORDING_DATE (YYYY-MM-DD) for this manual run — leave empty to use today's
+          Europe/Warsaw date. Useful when running this after local midnight has rolled over past
+          the day whose chunks you actually want to build.
+        required: false
+        default: ""
+
+concurrency:
+  # Shares the scheduled build's concurrency group so an on-demand run and a scheduled/
+  # workflow_run-triggered build can never race each other on the same release tag - see that
+  # workflow's comment for the check-then-act race this avoids. cancel-in-progress: false queues
+  # instead of cancelling, so whichever started first still completes and the second correctly
+  # no-ops via the idempotency guard below.
+  group: family-a-build-and-notify
+  cancel-in-progress: false
+
+jobs:
+  build_and_notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write   # required for `gh release create` in this repo
+      actions: read      # required for `gh api .../actions/artifacts` (list + download zip) —
+                          # once any explicit `permissions:` block is present, unlisted scopes
+                          # drop to `none`, so this must be listed even though it looks implicit
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout easy-OTP (source of the family_a CLI, read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: GISBoost/easy-OTP
+          path: easy-otp-src
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compute today's local (Europe/Warsaw) date
+        id: date
+        run: |
+          OVERRIDE="${{ github.event.inputs.date }}"
+          if [ -n "$OVERRIDE" ]; then
+            echo "date=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          else
+            echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for an existing release (idempotency guard)
+        id: existing_release
+        run: |
+          set -euo pipefail
+          TAG="lodz-realized-${{ steps.date.outputs.date }}"
+          if gh release view "$TAG" >/dev/null 2>err.log; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists - this day was already built (likely by the scheduled workflow); skipping the rest of this run."
+          elif grep -qi "not found" err.log; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            # Anything other than a plain "not found" (auth, rate limit, transient API error) is
+            # NOT safe to treat as "release doesn't exist" - doing so could still hit a
+            # duplicate-tag conflict later in Publish if the release actually does exist. Fail
+            # loudly here instead, so the real cause shows up in the log and triggers the
+            # failure notification, rather than a confusing error several steps downstream.
+            echo "::error::gh release view failed unexpectedly (not a plain \"not found\") - refusing to assume the release doesn't exist. Raw error follows:"
+            cat err.log >&2
+            exit 1
+          fi
+
+      - name: Cache pip dependencies
+        if: steps.existing_release.outputs.exists != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('easy-otp-src/tools/family_a_reconstruction/requirements.txt') }}
+
+      - name: Install dependencies
+        if: steps.existing_release.outputs.exists != 'true'
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: pip install -r requirements.txt
+
+      - name: Download fresh static GTFS
+        if: steps.existing_release.outputs.exists != 'true'
+        run: curl -fsSL -o static_gtfs.zip "${{ vars.LODZ_STATIC_GTFS_URL }}"
+
+      - name: Collect today's recording artifacts (by name prefix, not a fixed count)
+        id: artifacts
+        if: steps.existing_release.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          DATE="${{ steps.date.outputs.date }}"
+          PREFIX="positions-${DATE}-"
+          mkdir -p chunks
+
+          # List every non-expired artifact whose name starts with today's prefix - this is
+          # what makes the count dynamic: FA-7's default chunks (chunk1..chunk4) and any FA-9
+          # on-demand extras (e.g. positions-<date>-custom) are all picked up the same way, with
+          # zero assumption about how many there are or what their suffixes are called. The
+          # artifacts-list endpoint has no server-side prefix filter, so this is a client-side
+          # jq `startswith`. `gh api --jq` only accepts a single filter-expression argument (no
+          # `--arg` support) - variable binding needs the standalone `jq` binary instead, piped
+          # from raw --paginate output (multiple concatenated JSON page bodies, which jq's
+          # default streaming input handles natively without --slurp).
+          # De-duped by name (`sort -k2 -u` keeps exactly one row per distinct NAME - verified
+          # empirically, GNU coreutils sort's -u suppresses on the specified key alone, not the
+          # whole line - which id survives isn't guaranteed, but that's fine here) to guard
+          # against a same-day manual re-run of a chunk workflow producing two artifacts that
+          # share one name.
+          mapfile -t MATCHES < <(gh api "repos/${{ github.repository }}/actions/artifacts" --paginate \
+            | jq -r --arg prefix "$PREFIX" \
+                '.artifacts[] | select(.expired == false) | select(.name | startswith($prefix)) | "\(.id) \(.name)"' \
+            | sort -k2 -u)
+
+          if [ "${#MATCHES[@]}" -eq 0 ]; then
+            echo "::error::No artifacts found matching prefix '${PREFIX}' for ${DATE} - did FA-7's chunks run today?"
+            exit 1
+          fi
+
+          DIRS=()
+          for ENTRY in "${MATCHES[@]}"; do
+            ID="${ENTRY%% *}"
+            NAME="${ENTRY#* }"
+            gh api "repos/${{ github.repository }}/actions/artifacts/${ID}/zip" > "${NAME}.zip"
+            unzip -q "${NAME}.zip" -d "chunks/${NAME}"
+            rm "${NAME}.zip"
+            DIRS+=("chunks/${NAME}")
+          done
+
+          echo "count=${#DIRS[@]}" >> "$GITHUB_OUTPUT"
+          # Space-separated list, consumed word-split by `match` below - safe here since our own
+          # artifact names never contain spaces.
+          echo "dirs=${DIRS[*]}" >> "$GITHUB_OUTPUT"
+          echo "Found ${#DIRS[@]} recording director$( [ ${#DIRS[@]} -eq 1 ] && echo y || echo ies ) for ${DATE}: ${DIRS[*]}"
+
+      - name: Match
+        id: match
+        if: steps.existing_release.outputs.exists != 'true'
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: |
+          set -euo pipefail
+          args=()
+          for d in ${{ steps.artifacts.outputs.dirs }}; do
+            args+=(--positions-dir "../../../${d}")
+          done
+          python -m family_a.cli match \
+            "${args[@]}" \
+            --static "../../../static_gtfs.zip" \
+            --out "matched_${{ steps.date.outputs.date }}.csv" \
+            | tee "../../../match_output.log"
+
+          # FA-8 spec requires a failure notification (not a silent "success") when match finds
+          # zero observations - e.g. the static GTFS was republished mid-recording and every
+          # trip_id now resolves as unknown_shape (see FA-6 README's "Recording across multiple
+          # days" note). Without this check, `match`/`build` both exit 0 on an empty table and a
+          # misleadingly cheerful "ready" message would still go out.
+          MATCHED=$(grep '^Observations matched:' "../../../match_output.log" | grep -oE '[0-9]+' || echo 0)
+          echo "matched_count=${MATCHED:-0}" >> "$GITHUB_OUTPUT"
+          if [ "${MATCHED:-0}" -eq 0 ]; then
+            echo "::error::match produced zero observations - matched.csv is effectively empty (check the reject-count breakdown above; a republished static GTFS with a shifted trip_id generation mid-recording is a known cause)"
+            exit 1
+          fi
+
+      - name: Build
+        id: build
+        if: steps.existing_release.outputs.exists != 'true'
+        working-directory: easy-otp-src/tools/family_a_reconstruction
+        run: |
+          set -euo pipefail
+          python -m family_a.cli build \
+            --matched "matched_${{ steps.date.outputs.date }}.csv" \
+            --static "../../../static_gtfs.zip" \
+            --out-prefix "../../../lodz_realized_${{ steps.date.outputs.date }}" \
+            | tee "../../../build_output.log"
+          CORRECTED=$(grep '^Segments corrected:' "../../../build_output.log" | grep -oE '[0-9]+' || echo 0)
+          echo "segments_corrected=${CORRECTED:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release (in this repo — never in easy-OTP)
+        if: steps.existing_release.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          DATE="${{ steps.date.outputs.date }}"
+          COUNT="${{ steps.artifacts.outputs.count }}"
+          MATCHED="${{ steps.match.outputs.matched_count }}"
+          CORRECTED="${{ steps.build.outputs.segments_corrected }}"
+          gh release create "lodz-realized-${DATE}" \
+            "lodz_realized_${DATE}_p50.zip" "lodz_realized_${DATE}_p85.zip" \
+            --title "Łódź — ${DATE} — realized GTFS" \
+            --notes "Automated build (on-demand run). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
+
+      - name: Notify WhatsApp (success)
+        if: success() && steps.existing_release.outputs.exists != 'true'
+        run: |
+          set -euo pipefail
+          DATE="${{ steps.date.outputs.date }}"
+          COUNT="${{ steps.artifacts.outputs.count }}"
+          MATCHED="${{ steps.match.outputs.matched_count }}"
+          CORRECTED="${{ steps.build.outputs.segments_corrected }}"
+          P50_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}/lodz_realized_${DATE}_p50.zip"
+          P85_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}/lodz_realized_${DATE}_p85.zip"
+          TEXT=$(printf 'Lodz GTFS-RT (%s) ready [on-demand build]. %s recording director%s merged, %s observations matched, %s segments corrected.\nP50: %s\nP85: %s' \
+            "${DATE}" "${COUNT}" "$([ "${COUNT}" = "1" ] && echo y || echo ies)" \
+            "${MATCHED}" "${CORRECTED}" \
+            "${P50_URL}" "${P85_URL}")
+          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
+            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
+            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
+            --data-urlencode "text=${TEXT}"
+
+      - name: Notify WhatsApp (failure)
+        if: failure()
+        run: |
+          set -euo pipefail
+          TEXT="Lodz GTFS-RT (${{ steps.date.outputs.date }}) on-demand build FAILED - check Actions log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
+            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
+            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
+            --data-urlencode "text=${TEXT}"
