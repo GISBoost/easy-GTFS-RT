@@ -2,5 +2,9 @@
   "lodz": {
     "display_name": "Łódź",
     "static_gtfs_url": "https://otwarte.miasto.lodz.pl/wp-content/uploads/2025/06/GTFS.zip"
+  },
+  "poznan": {
+    "display_name": "Poznań",
+    "static_gtfs_url": "https://www.ztm.poznan.pl/pl/dla-deweloperow/getGTFSFile"
   }
 }
