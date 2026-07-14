@@ -8,18 +8,24 @@ i odbudowę zrealizowanego GTFS dla easy-OTP's narzędzia Family A
 `family_a` CLI. Nie duplikuj tego kodu tutaj.
 
 ## Źródło prawdy
-`GISBoost/easy-OTP`'s `docs/prd/PR_easy-OTP_v07.md` (sekcje FA-7/FA-8/FA-9) i
-`docs/prompts/easy-OTP_v07_prompts_for-claude-code.md` (prompty FA-7/FA-8/FA-9). Ten CLAUDE.md
-tego nie powiela.
+**Aktualnie: `GISBoost/easy-OTP`'s `docs/prd/PR_easy-OTP_termux-migration.md`** (tor telefonowy
+TX-1..TX-7, jedyny aktualnie produkujący pipeline od 2026-07-14) i
+`scripts/termux/README.md` w tym samym repo (strona telefonowa tego pipeline'u).
+
+Historycznie: `docs/prd/PR_easy-OTP_v07.md` (sekcje FA-7/FA-8/FA-9) i
+`docs/prompts/easy-OTP_v07_prompts_for-claude-code.md` — opisują **wygaszony** tor nagrywania
+przez GitHub Actions (chunki), zastąpiony przez telefon. `family_a_build_and_notify.yml` i
+`family_a_build_and_notify_on_demand.yml` zostały w repo jako odniesienie, ale nie mają już
+źródła danych (chunki usunięte) — nie traktuj ich jako działający fallback bez wyraźnej decyzji
+o przywróceniu nagrywania przez Actions.
 
 ## Twarde ograniczenia
 - Zero zmian w `GISBoost/easy-OTP` — checkout tego repo w workflowach jest zawsze read-only.
 - Nie zgaduj URL-i/wartości konfiguracyjnych — pytaj, jeśli coś niepotwierdzone.
-- Nie zmieniaj granic/czasów trwania chunków FA-7 bez wyraźnej decyzji — są dobrane pod szczyty
-  komunikacyjne (7-10/14-18), nie równy podział doby.
-- FA-8's odkrywanie artefaktów jest po prefiksie nazwy (`positions-<data>-`), nigdy po
-  zahardkodowanej liście/liczbie — to musi zostać tak, żeby FA-9's doraźne nagrania też się
-  wliczały.
+- `family_a_build_and_notify_from_phone.yml`'s `repository_dispatch` `event_type`
+  (`"phone-sweep-complete"`) musi się zgadzać dokładnie (case-sensitive) z tym, co wysyła
+  `sweep_and_upload.sh` w `easy-OTP` — literówka po którejkolwiek stronie = cicho zignorowany
+  event, bez błędu.
 - Sekrety (`CALLMEBOT_PHONE`, `CALLMEBOT_APIKEY`) i zmienne (`LODZ_STATIC_GTFS_URL`,
   `LODZ_VEHICLE_POSITIONS_URL`) żyją w Settings tego repo, nie w kodzie.
 - Kod/komentarze/commity: po angielsku.

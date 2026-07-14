@@ -16,90 +16,69 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
   etc.). Dumping a GitHub Release into that list every single day would bury real plugin
   releases under daily data snapshots.
 - This repo is **public**, which gets GitHub Actions unlimited minutes and artifact storage
-  outside the default 500MB/repo cap that applies to private repos — meaningful for a job that
-  records for up to 16 hours/day and produces a new GTFS build every evening.
+  outside the default 500MB/repo cap that applies to private repos.
 - Secrets and repo variables here (`CALLMEBOT_*`, `LODZ_*`) are scoped to this repo only and
   are never needed by, or exposed to, `easy-OTP`.
 
-## Pipeline, end to end
+## Current approach: recording via a phone (Termux, TX-*)
+
+**As of 2026-07-14, this is the only actively producing pipeline.** Recording moved off
+GitHub Actions runners entirely and onto Michał's Android phone, running continuously via
+Termux instead of in scheduled chunks — see `GISBoost/easy-OTP`'s
+[`scripts/termux/README.md`](https://github.com/GISBoost/easy-OTP/blob/main/scripts/termux/README.md)
+for the phone-side half of this pipeline (recording, self-healing, daily upload). This repo
+only holds the GitHub-side half:
 
 ```
-06:00 ───────────────────────────────────────────────────────────────── 22:00  (Europe/Warsaw)
- chunk1 [05:00–10:30]
-    chunk2 [10:00–14:30]
-                chunk3 [13:30–18:30]
-                                chunk4 [18:00–22:00]
-                                                      ↓ (workflow_run, right after chunk4 finishes)
-                                                 build_and_notify
-                                                      → GitHub Release (this repo)
-                                                      → WhatsApp message (CallMeBot)
+Phone (Termux, easy-OTP)                          This repo (easy-GTFS-RT)
+-------------------------                          -------------------------
+06:00-22:00  continuous recording (self-healing)
+22:10        sweep_and_upload.sh uploads today's
+             raw recordings as a pre-release
+             (positions-raw-<date>), then fires
+             a repository_dispatch event    ----->
+                                                    (seconds later) family_a_build_and_notify
+                                                    _from_phone.yml downloads the raw release,
+                                                    builds P50/P85 corrected GTFS, publishes
+                                                    "lodz-realized-<date>-phone", WhatsApp notify
+                                                    22:15  schedule fallback (only does real
+                                                           work if the dispatch above never
+                                                           fired or failed)
+                                                    21:00  family_a_phone_healthcheck.yml alerts
+                                                           via WhatsApp if that day's raw release
+                                                           is still missing
 ```
 
-1. **Four recording workflows** (`family_a_record_chunk{1..4}.yml`) each run `family_a record`
-   against the live Łódź `VehiclePositions` feed for a chunk of the day and upload the raw
-   `.pb` snapshots as an artifact named `positions-<YYYY-MM-DD>-chunk{N}`. Chunk windows and
-   durations are deliberately uneven and overlapping — they're built around the morning
-   (7:00–10:00) and afternoon (14:00–18:00) transit peaks, with extra buffer where GitHub
-   Actions' own schedule jitter could otherwise eat into a peak window. **Don't rebalance these
-   into equal thirds/quarters** — the uneven split is intentional, see the comments in each
-   chunk workflow.
+- **`family_a_build_and_notify_from_phone.yml`** — builds and publishes the corrected GTFS.
+  Triggered primarily by `repository_dispatch` (fired by the phone right after upload — starts
+  within seconds), with the `schedule:` cron kept only as a fallback for when the phone's
+  dispatch call itself fails, plus `workflow_dispatch` for manual runs/date overrides. Same
+  idempotency-guard and actual-recorded-coverage logic as the retired chunk-based build below.
+- **`family_a_phone_healthcheck.yml`** — a separate scheduled check (21:00 Europe/Warsaw) that
+  alerts via WhatsApp if that day's raw release from the phone hasn't shown up yet, so a silent
+  phone-side failure (recording or upload) is caught from the reliable GitHub Actions side.
 
-   **GitHub's `schedule:` trigger is best-effort, not guaranteed**, and is documented to be
-   most congested at the top of the hour — every `cron:` here deliberately avoids `:00`/`:30`
-   for that reason. Even so, delays happen and aren't bounded: on 2026-07-12, chunk1's trigger
-   (then still at `:00`) fired 2h31m late, confirmed via the GitHub API to be 100% scheduler
-   dispatch delay (the job itself started ~3s after the run was created — zero runner-queue
-   delay), and left a real gap in that morning's peak recording. chunk1's buffer was widened
-   from 1h to 2h lead-in afterward (05:00 start instead of 06:00) to better absorb a repeat.
-   This mitigates the risk, it does not eliminate it — a large enough delay can still leave a
-   gap, and there is no configuration that guarantees otherwise on this trigger type. **A gap
-   like that one is no longer silent**, though — see the "Actual recorded coverage" point below;
-   it would now show up directly in the Release/WhatsApp output instead of requiring an Actions
-   log check.
-2. **`family_a_build_and_notify.yml`** ("Łódź — build") runs once a day, after the last chunk
-   finishes:
-   - Discovers **all** of that day's recording artifacts by **name prefix**
-     (`positions-<date>-`), via the GitHub REST API — never a hardcoded chunk count. This is
-     what lets the pipeline degrade gracefully (fewer chunks that day) or, later, pick up an
-     on-demand custom recording under the same prefix, with zero workflow changes.
-   - Reads each chunk's `recording.json` manifest (written by `family_a record` itself) to
-     compute the **actual recorded coverage** — real, merged start/stop times (e.g.
-     `08:32-11:52, 12:16-16:16`), not the nominal cron windows — so a schedule-trigger delay
-     shows up as a visible gap in the Release notes and WhatsApp message instead of being
-     assumed away.
-   - Downloads a fresh static GTFS and runs `family_a match` (merging every discovered
-     directory) then `family_a build`, producing P50 (median) and P85 (85th percentile)
-     corrected GTFS zips.
-   - Publishes the P50/P85 zips **and that day's static GTFS** as a GitHub Release in **this**
-     repo (tag `lodz-realized-<date>`), and sends one WhatsApp message via
-     [CallMeBot](https://www.callmebot.com/) with the direct P50/P85 download links and the
-     recorded-coverage summary — or a failure message if anything broke, so a bad day doesn't
-     just show up as silence.
+## History: recording via GitHub Actions (FA-7/FA-8/FA-9, retired 2026-07-14)
 
-### Why the build trigger isn't a simple fixed-time schedule
+Before the phone, recording ran directly on GitHub Actions runners in four overlapping daily
+"chunk" windows (`family_a_record_chunk1..4.yml`, built around the morning/afternoon transit
+peaks), feeding **`family_a_build_and_notify.yml`** (triggered via `workflow_run` on chunk4's
+completion) and its manual companion **`family_a_build_and_notify_on_demand.yml`**. Together
+these produced the non-phone-suffixed `lodz-realized-<date>` release.
 
-`build_and_notify` triggers primarily via `workflow_run` on chunk4's completion — it fires the
-moment chunk4 *actually* finishes, whatever real delay that involved that day, instead of
-guessing a fixed time buffer after its nominal end (a fixed buffer was tried first and found to
-be too tight against GitHub's observed schedule jitter). A few things layered on top of that,
-worth knowing before touching this workflow:
-
-- The `workflow_run` trigger only fires a build for chunk4's **scheduled** runs (gated by
-  `github.event.workflow_run.event == 'schedule'`), not manual/test runs — otherwise testing
-  chunk4 by hand would trigger a premature build with an incomplete day.
-- `build_and_notify` has **no time-based fallback of its own** anymore. A `schedule:` 23:45 CEST
-  end-of-day cron used to fill that role, but it was removed on 2026-07-13 after GitHub's
-  schedule-queue delay pushed one such run past local midnight: it computed "today" as the
-  *next* day (whose chunks hadn't recorded yet) and failed with a spurious "no artifacts found"
-  right after `workflow_run` had already published that day's release successfully. The cron
-  also routinely fired too late to be useful even when it didn't fail outright. If `workflow_run`
-  doesn't fire for a given day, run **`family_a_build_and_notify_on_demand.yml`** by hand
-  instead — same steps, `workflow_dispatch`-only, same `date` override.
-- An idempotency guard (`gh release view` before doing any work) makes a same-day
-  double-trigger a clean no-op instead of a duplicate-release-tag failure, and
-  `concurrency: group: family-a-build-and-notify` (queue, don't cancel) — shared with the
-  on-demand workflow too — closes the small check-then-act race window between two
-  near-simultaneous triggers.
+**This approach is retired, not maintained.** The four chunk workflows have been deleted -
+GitHub Actions' `schedule:` trigger proved to have unbounded delay (a 2h31m-late run was
+observed and only partially mitigated by widening buffers), and continuous phone recording
+sidesteps that whole class of problem instead of working around it further. `family_a_build_
+and_notify.yml` and `family_a_build_and_notify_on_demand.yml` are left in the repo as a
+reference for the artifact-discovery/coverage/idempotency-guard patterns they established (the
+phone-build workflow above reuses the same ideas against a release instead of artifacts), but
+**neither has a working data source anymore** - both discover input by `positions-<date>-*`
+artifact name prefix, which only the now-deleted chunk workflows ever produced. Running either
+by hand today will fail at "no artifacts found" unless something else starts uploading
+matching-prefixed artifacts again. Full original design rationale, if ever needed:
+`GISBoost/easy-OTP`'s `docs/prd/PR_easy-OTP_v07.md` (FA-7/FA-8/FA-9) and
+`docs/prd/PR_easy-OTP_termux-migration.md` (the migration rationale itself).
 
 ## Repository configuration
 
@@ -124,16 +103,12 @@ Set under **Settings → Secrets and variables → Actions**, in this repo (not 
 
 ## Manual testing
 
-Every workflow here also has a `workflow_dispatch` trigger, so nothing requires waiting for a
-cron to fire:
-
-- Run any `family_a_record_chunk{1..4}.yml` by hand from the Actions tab to produce a test
-  artifact for today.
-- Run `family_a_build_and_notify.yml` or `family_a_build_and_notify_on_demand.yml` by hand; both
-  accept an optional `date` input (`YYYY-MM-DD`) to target a specific day's recording instead of
-  today — useful when running shortly after local midnight, when "today" would otherwise no
-  longer match last night's chunk artifacts. The on-demand version is also the way to trigger a
-  build at all if `workflow_run` never fired for that day (see above).
+- `family_a_build_and_notify_from_phone.yml` accepts an optional `date` input (`YYYY-MM-DD`) to
+  target a specific day instead of today - useful when testing, or recovering a day the
+  `repository_dispatch`/schedule triggers both missed. See `easy-OTP`'s
+  `docs/handoffs/termux-ssh_cheatsheet-for-michal.md` (section 12) for how to manually re-fire
+  the `repository_dispatch` event itself from the phone.
+- `family_a_phone_healthcheck.yml` also has a bare `workflow_dispatch` for an on-demand check.
 
 A manually-triggered build does **not** get skipped by the idempotency guard unless a Release
 for that date already exists.
@@ -144,22 +119,23 @@ for that date already exists.
   WhatsApp notification silently fails to send — but the GitHub Release is still published
   either way. The Release is the source of truth; WhatsApp is a convenience notification on
   top of it, not the delivery mechanism itself.
-- **DST is not auto-compensated.** All `cron:` schedules in this repo are UTC and hand-tuned
-  for the currently active offset (see the comment above each `cron:` line for the CET/CEST
+- **DST is not auto-compensated.** `cron:` schedules in this repo are UTC and hand-tuned for
+  the currently active offset (see the comment above each `cron:` line for the CET/CEST
   equivalent) — they need a manual one-hour edit after each DST switch (last Sunday of
-  March/October).
+  March/October). Since the phone-build workflow's primary trigger is now `repository_dispatch`
+  (not schedule-based), this only matters for its fallback path and for the healthcheck.
 - **The static GTFS is downloaded fresh every build**, never cached long-term — Łódź's open
   data feed has been observed to republish with a shifted `trip_id` generation between
   recording sessions, and reusing a stale static feed against newer recordings silently
   produces a suspiciously high `unknown_shape` reject count in `match`'s output instead of an
-  error. If that ever shows up, it's this, not a pipeline bug. Since 2026-07-13, the exact
-  static GTFS used for a given day's `match`/`build` is archived as a third asset on that day's
-  Release (`lodz_static_gtfs_<date>.zip`) — precisely so a future comparison between two days'
-  realized GTFS isn't invalidated by this same drift.
-- **Recorded-coverage times come from each chunk's own `recording.json` manifest**
+  error. If that ever shows up, it's this, not a pipeline bug. The exact static GTFS used for a
+  given day's `match`/`build` is archived as a third asset on that day's Release
+  (`lodz_static_gtfs_<date>.zip`) — precisely so a future comparison between two days' realized
+  GTFS isn't invalidated by this same drift.
+- **Recorded-coverage times come from each recording directory's own `recording.json` manifest**
   (`started_at`/`stopped_at`, written by `family_a record`), not from a live poll log — so a
-  chunk that ran but produced zero/`failed` snapshots throughout would still report as
-  "covered" for that time range. This matches what the coverage summary is meant to answer
+  recording session that ran but produced zero/`failed` snapshots throughout would still report
+  as "covered" for that time range. This matches what the coverage summary is meant to answer
   ("was a recording job actually running then"), not "how much clean data came back" — the
   latter is what `match`'s own reject-count output is for.
 
@@ -168,6 +144,6 @@ for that date already exists.
 This repo only orchestrates. The `family_a` CLI (`record` / `match` / `build`), its algorithm,
 and its own documentation live in `GISBoost/easy-OTP`, under
 [`tools/family_a_reconstruction/`](https://github.com/GISBoost/easy-OTP/tree/main/tools/family_a_reconstruction)
-(see that folder's own `README.md` for the CLI contract this repo's workflows call into, and
-`docs/prd/PR_easy-OTP_v07.md` for the full design rationale behind this pipeline, milestones
-FA-7/FA-8/FA-9).
+(see that folder's own `README.md` for the CLI contract this repo's workflows call into,
+`docs/prd/PR_easy-OTP_termux-migration.md` for the current phone-based pipeline's design
+rationale, and `docs/prd/PR_easy-OTP_v07.md` for the retired GitHub-Actions-recording approach).
