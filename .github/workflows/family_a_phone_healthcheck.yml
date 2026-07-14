@@ -1,12 +1,13 @@
 name: Family A — phone recording healthcheck
 
 on:
-  # Runs once daily, shortly before TX-4's 22:15 Europe/Warsaw build, so a missing
-  # positions-raw-<date> release (i.e. TX-2's recording service or TX-3's evening sweep silently
-  # failed on the phone) is caught and alerted on before TX-4 fails on it anyway. A midday check
-  # was deliberately not added: TX-3's sweep only runs at 22:10, so a midday run would almost
-  # always correctly report "nothing yet" — that's not useful signal, it's just noise. Confirmed
-  # with Michal (2026-07-13): one run per day, 21:00 Europe/Warsaw.
+  # Runs once daily, shortly before the phone build workflow's 22:15 Europe/Warsaw fallback, so a
+  # missing positions-raw-<city>-<date> release (i.e. TX-2's recording service or TX-3's evening
+  # sweep silently failed on the phone, for one city or all of them) is caught and alerted on
+  # before the build fails on it anyway. A midday check was deliberately not added: TX-3's sweep
+  # only runs at 22:10, so a midday run would almost always correctly report "nothing yet" —
+  # that's not useful signal, it's just noise. Confirmed with Michal (2026-07-13): one run per
+  # day, 21:00 Europe/Warsaw. Since TX-8, checks every city in config/cities.json, not just Łódź.
   schedule:
     - cron: "0 19 * * *"   # 21:00 CEST (summer, UTC+2). GitHub Actions cron has no DST awareness,
                            # so this needs a manual flip to "0 20 * * *" (21:00 CET, winter,
@@ -21,22 +22,36 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Checkout this repo (for config/cities.json)
+        uses: actions/checkout@v4
+
       - name: Compute today's local (Europe/Warsaw) date
         id: date
         run: echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
 
-      - name: Check for today's raw-recording release
+      - name: Check for today's raw-recording release, per city
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="positions-raw-${{ steps.date.outputs.date }}"
-          ASSET_COUNT="$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets | length' 2>/dev/null || echo 0)"
-          if [ "$ASSET_COUNT" -gt 0 ]; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
+          DATE="${{ steps.date.outputs.date }}"
+          MISSING=()
+          for CITY in $(jq -r 'keys[]' config/cities.json); do
+            TAG="positions-raw-${CITY}-${DATE}"
+            ASSET_COUNT="$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets | length' 2>/dev/null || echo 0)"
+            if [ "$ASSET_COUNT" -eq 0 ]; then
+              MISSING+=("$CITY")
+            fi
+          done
+
+          if [ "${#MISSING[@]}" -gt 0 ]; then
             echo "found=false" >> "$GITHUB_OUTPUT"
+            # Space-separated list, safe here since config/cities.json keys are plain city ids
+            # (no spaces).
+            echo "missing=${MISSING[*]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Alert if missing
@@ -45,4 +60,4 @@ jobs:
           curl -sS -G "https://api.callmebot.com/whatsapp.php" \
             --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
             --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
-            --data-urlencode "text=easy-GTFS-RT (phone): no raw recording found for ${{ steps.date.outputs.date }} yet - check the phone."
+            --data-urlencode "text=easy-GTFS-RT (phone): no raw recording found for ${{ steps.date.outputs.date }} yet - missing cities: ${{ steps.check.outputs.missing }} - check the phone."

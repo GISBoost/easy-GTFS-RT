@@ -9,7 +9,7 @@ i odbudowę zrealizowanego GTFS dla easy-OTP's narzędzia Family A
 
 ## Źródło prawdy
 **Aktualnie: `GISBoost/easy-OTP`'s `docs/prd/PR_easy-OTP_termux-migration.md`** (tor telefonowy
-TX-1..TX-7, jedyny aktualnie produkujący pipeline od 2026-07-14) i
+TX-1..TX-8, jedyny aktualnie produkujący pipeline od 2026-07-14) i
 `scripts/termux/README.md` w tym samym repo (strona telefonowa tego pipeline'u).
 
 Historycznie: `docs/prd/PR_easy-OTP_v07.md` (sekcje FA-7/FA-8/FA-9) i
@@ -26,8 +26,14 @@ o przywróceniu nagrywania przez Actions.
   (`"phone-sweep-complete"`) musi się zgadzać dokładnie (case-sensitive) z tym, co wysyła
   `sweep_and_upload.sh` w `easy-OTP` — literówka po którejkolwiek stronie = cicho zignorowany
   event, bez błędu.
-- Sekrety (`CALLMEBOT_PHONE`, `CALLMEBOT_APIKEY`) i zmienne (`LODZ_STATIC_GTFS_URL`,
-  `LODZ_VEHICLE_POSITIONS_URL`) żyją w Settings tego repo, nie w kodzie.
+- Sekrety (`CALLMEBOT_PHONE`, `CALLMEBOT_APIKEY`) żyją w Settings tego repo, nie w kodzie.
+- **`config/cities.json` (TX-8)** to źródło prawdy które miasta buduje
+  `family_a_build_and_notify_from_phone.yml`/healthcheck — zastąpił dawne zmienne
+  `LODZ_STATIC_GTFS_URL`/`LODZ_VEHICLE_POSITIONS_URL` w Settings (URL-e publiczne, nie sekrety,
+  więc wersjonowanie w repo jest prostsze). Klucz (city id) musi się zgadzać dokładnie
+  (case-sensitive) z `city` w `client_payload` dispatcha z telefonu i z nazwą
+  pliku/usługi na telefonie (`cities/<city>.env`, `family-a-record-<city>`, w `easy-OTP`).
+  Nieznany `city` = jawny błąd joba (`resolve_targets`), nigdy cichy no-op.
 - Kod/komentarze/commity: po angielsku.
 
 ## Workflow pracy

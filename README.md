@@ -1,7 +1,7 @@
 # easy-GTFS-RT
 
-CI/CD-only repository that automates daily recording of Łódź's GTFS-RT `VehiclePositions`
-feed and the reconstruction of a realized ("what actually happened") GTFS from it, for
+CI/CD-only repository that automates daily recording of GTFS-RT `VehiclePositions` feeds and
+the reconstruction of a realized ("what actually happened") GTFS from them, for
 [`GISBoost/easy-OTP`](https://github.com/GISBoost/easy-OTP)'s **Family A** tool
 (`tools/family_a_reconstruction/`).
 
@@ -16,9 +16,22 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
   etc.). Dumping a GitHub Release into that list every single day would bury real plugin
   releases under daily data snapshots.
 - This repo is **public**, which gets GitHub Actions unlimited minutes and artifact storage
-  outside the default 500MB/repo cap that applies to private repos.
-- Secrets and repo variables here (`CALLMEBOT_*`, `LODZ_*`) are scoped to this repo only and
-  are never needed by, or exposed to, `easy-OTP`.
+  outside the default 500MB/repo cap that applies to private repos — meaningful for a job that
+  records for up to 16 hours/day and produces a new GTFS build every evening.
+- Secrets here (`CALLMEBOT_*`) are scoped to this repo only and are never needed by, or exposed
+  to, `easy-OTP`.
+
+## Multi-city support (TX-8)
+
+The phone-build workflow (`family_a_build_and_notify_from_phone.yml`) and the healthcheck
+(`family_a_phone_healthcheck.yml`) support recording/building more than one city from the same
+phone in parallel. **`config/cities.json`** (versioned in this repo) is the single source of
+truth for which cities are configured — each key is a city id (e.g. `"lodz"`) with a
+`display_name` and a `static_gtfs_url`. Release tags and filenames are all prefixed with the city
+id (`<city>-realized-<date>-phone`, `positions-raw-<city>-<date>`, etc.) instead of the old
+hardcoded `lodz-`/`Łódź` naming. Adding a city is a `config/cities.json` entry here plus a
+matching per-city config on the phone (`easy-OTP`'s `scripts/termux/README.md` has the runbook)
+— no other workflow changes needed.
 
 ## Current approach: recording via a phone (Termux, TX-*)
 
@@ -26,37 +39,44 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
 GitHub Actions runners entirely and onto Michał's Android phone, running continuously via
 Termux instead of in scheduled chunks — see `GISBoost/easy-OTP`'s
 [`scripts/termux/README.md`](https://github.com/GISBoost/easy-OTP/blob/main/scripts/termux/README.md)
-for the phone-side half of this pipeline (recording, self-healing, daily upload). This repo
-only holds the GitHub-side half:
+for the phone-side half of this pipeline (recording, self-healing, daily upload, one process per
+city). This repo only holds the GitHub-side half:
 
 ```
 Phone (Termux, easy-OTP)                          This repo (easy-GTFS-RT)
 -------------------------                          -------------------------
-06:00-22:00  continuous recording (self-healing)
-22:10        sweep_and_upload.sh uploads today's
-             raw recordings as a pre-release
-             (positions-raw-<date>), then fires
-             a repository_dispatch event    ----->
-                                                    (seconds later) family_a_build_and_notify
-                                                    _from_phone.yml downloads the raw release,
-                                                    builds P50/P85 corrected GTFS, publishes
-                                                    "lodz-realized-<date>-phone", WhatsApp notify
-                                                    22:15  schedule fallback (only does real
-                                                           work if the dispatch above never
-                                                           fired or failed)
+06:00-22:00  continuous recording (self-healing),
+             one process per configured city
+22:10        sweep_and_upload.sh loops every city:
+             uploads today's raw recordings as a
+             pre-release (positions-raw-<city>-
+             <date>), then fires a
+             repository_dispatch event per city
+             that had new data          ----->
+                                                    (seconds later, per city) family_a_build_and
+                                                    _notify_from_phone.yml downloads that city's
+                                                    raw release, builds P50/P85 corrected GTFS,
+                                                    publishes "<city>-realized-<date>-phone",
+                                                    WhatsApp notify
+                                                    22:15  schedule fallback - expands to every
+                                                           city in config/cities.json; each
+                                                           city's idempotency guard makes an
+                                                           already-built one a fast no-op
                                                     21:00  family_a_phone_healthcheck.yml alerts
-                                                           via WhatsApp if that day's raw release
-                                                           is still missing
+                                                           via WhatsApp, listing any city whose
+                                                           raw release is still missing
 ```
 
-- **`family_a_build_and_notify_from_phone.yml`** — builds and publishes the corrected GTFS.
-  Triggered primarily by `repository_dispatch` (fired by the phone right after upload — starts
-  within seconds), with the `schedule:` cron kept only as a fallback for when the phone's
-  dispatch call itself fails, plus `workflow_dispatch` for manual runs/date overrides. Same
-  idempotency-guard and actual-recorded-coverage logic as the retired chunk-based build below.
+- **`family_a_build_and_notify_from_phone.yml`** — builds and publishes the corrected GTFS, one
+  city per matrix leg. Triggered primarily by `repository_dispatch` (fired by the phone right
+  after upload — starts within seconds), with the `schedule:` cron kept only as a fallback for
+  when the phone's dispatch call itself fails, plus `workflow_dispatch` for manual runs/date/city
+  overrides. Same idempotency-guard and actual-recorded-coverage logic as the retired chunk-based
+  build below.
 - **`family_a_phone_healthcheck.yml`** — a separate scheduled check (21:00 Europe/Warsaw) that
-  alerts via WhatsApp if that day's raw release from the phone hasn't shown up yet, so a silent
-  phone-side failure (recording or upload) is caught from the reliable GitHub Actions side.
+  alerts via WhatsApp if any configured city's raw release from the phone hasn't shown up yet, so
+  a silent phone-side failure (recording or upload) is caught from the reliable GitHub Actions
+  side.
 
 ## History: recording via GitHub Actions (FA-7/FA-8/FA-9, retired 2026-07-14)
 
@@ -84,11 +104,10 @@ matching-prefixed artifacts again. Full original design rationale, if ever neede
 
 Set under **Settings → Secrets and variables → Actions**, in this repo (not `easy-OTP`'s):
 
-**Variables**
-| Name | Value |
-|---|---|
-| `LODZ_STATIC_GTFS_URL` | `https://otwarte.miasto.lodz.pl/wp-content/uploads/2025/06/GTFS.zip` |
-| `LODZ_VEHICLE_POSITIONS_URL` | `https://otwarte.miasto.lodz.pl/wp-content/uploads/2025/06/vehicle_positions.bin` |
+Since TX-8, per-city static GTFS URLs live in `config/cities.json` (this repo, versioned) instead
+of Settings variables — see "Multi-city support" above. Each city's `VEHICLE_POSITIONS_URL`
+equivalent lives entirely on the phone, in `~/easy-gtfs-rt-termux/cities/<city>.env` (`easy-OTP`'s
+`scripts/termux/README.md`), never in this repo's settings.
 
 **Secrets**
 | Name | Value |
@@ -103,15 +122,16 @@ Set under **Settings → Secrets and variables → Actions**, in this repo (not 
 
 ## Manual testing
 
-- `family_a_build_and_notify_from_phone.yml` accepts an optional `date` input (`YYYY-MM-DD`) to
-  target a specific day instead of today - useful when testing, or recovering a day the
+- `family_a_build_and_notify_from_phone.yml` accepts optional `date` and `city` inputs
+  (`YYYY-MM-DD`, a `config/cities.json` key) to target a specific day/city instead of building
+  every configured city for today - useful when testing, or recovering a day the
   `repository_dispatch`/schedule triggers both missed. See `easy-OTP`'s
   `docs/handoffs/termux-ssh_cheatsheet-for-michal.md` (section 12) for how to manually re-fire
   the `repository_dispatch` event itself from the phone.
 - `family_a_phone_healthcheck.yml` also has a bare `workflow_dispatch` for an on-demand check.
 
 A manually-triggered build does **not** get skipped by the idempotency guard unless a Release
-for that date already exists.
+for that date/city already exists.
 
 ## Known, accepted trade-offs
 
@@ -124,14 +144,14 @@ for that date already exists.
   equivalent) — they need a manual one-hour edit after each DST switch (last Sunday of
   March/October). Since the phone-build workflow's primary trigger is now `repository_dispatch`
   (not schedule-based), this only matters for its fallback path and for the healthcheck.
-- **The static GTFS is downloaded fresh every build**, never cached long-term — Łódź's open
-  data feed has been observed to republish with a shifted `trip_id` generation between
+- **The static GTFS is downloaded fresh every build**, never cached long-term — an open data
+  feed has been observed (Łódź) to republish with a shifted `trip_id` generation between
   recording sessions, and reusing a stale static feed against newer recordings silently
   produces a suspiciously high `unknown_shape` reject count in `match`'s output instead of an
   error. If that ever shows up, it's this, not a pipeline bug. The exact static GTFS used for a
   given day's `match`/`build` is archived as a third asset on that day's Release
-  (`lodz_static_gtfs_<date>.zip`) — precisely so a future comparison between two days' realized
-  GTFS isn't invalidated by this same drift.
+  (`<city>_static_gtfs_<date>.zip`) — precisely so a future comparison between two days'
+  realized GTFS isn't invalidated by this same drift.
 - **Recorded-coverage times come from each recording directory's own `recording.json` manifest**
   (`started_at`/`stopped_at`, written by `family_a record`), not from a live poll log — so a
   recording session that ran but produced zero/`failed` snapshots throughout would still report
