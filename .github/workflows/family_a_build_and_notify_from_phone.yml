@@ -1,20 +1,31 @@
 name: Łódź — build (phone)
 
 on:
-  # No GitHub-side equivalent of FA-8's "chunk4 completion" workflow_run trigger exists here —
-  # nothing runs on Actions for the phone-recording path (TX-2/TX-3 run entirely on-device via
-  # Termux). `schedule:` is therefore this workflow's only automatic trigger, fixed at 22:15
-  # Europe/Warsaw, 5 minutes after TX-3's 22:10 sweep-and-upload is expected to have published
-  # today's `positions-raw-<date>` release.
+  # Primary trigger (TX-7): sweep_and_upload.sh (Termux, TX-3) fires this event via a plain
+  # `curl -X POST .../dispatches` call immediately after it finishes uploading today's raw
+  # recordings, so the build starts within seconds instead of waiting for the schedule below.
+  repository_dispatch:
+    types: [phone-sweep-complete]
+
+  # Fallback safety net, kept deliberately even though repository_dispatch is now primary: covers
+  # the case where the phone's dispatch call itself fails (network hiccup right after upload, an
+  # expired GH_TOKEN - which also silently disables the dispatch call, not just the upload).
+  # Safe to keep alongside the primary trigger: `concurrency:` below (`cancel-in-progress: false`)
+  # serializes every trigger of this same workflow regardless of type, so a same-day dispatch run
+  # and a stray schedule run never race - whichever finishes second just finds today's release
+  # already published (the idempotency guard below) and exits as a fast no-op, no duplicate
+  # WhatsApp message.
   #
   # This reintroduces the same class of risk `family_a_build_and_notify.yml` (FA-8) deliberately
   # dropped its own 23:45 schedule fallback for on 2026-07-13 (Michał decision, see that file's
   # history): a delayed scheduled run whose `TZ=Europe/Warsaw date +%F` rolls past local midnight
   # resolves to *tomorrow's* date and fails on "no release found yet" for a day that hasn't
   # recorded. FA-8 could simply drop its fallback because it has `workflow_run` as a reliable
-  # primary trigger instead; this workflow has no such alternative. Mitigated by the
-  # `workflow_dispatch` date override below for manual recovery, and by TX-6 (separate, later
-  # milestone) monitoring for a missing release.
+  # primary trigger instead; this workflow's own primary trigger is now repository_dispatch above,
+  # which doesn't have this midnight-rollover risk (it fires within seconds of upload, and reads
+  # the date from the phone's own payload, not the runner's clock) - so this schedule only matters
+  # as a rarely-exercised fallback. Also mitigated by the `workflow_dispatch` date override below
+  # for manual recovery, and by TX-6 (separate milestone) monitoring for a missing release.
   schedule:
     - cron: "15 20 * * *"   # 22:15 CEST (summer, UTC+2). GitHub Actions cron has no DST
                             # awareness, so this needs a manual flip to "15 21 * * *" (22:15 CET,
@@ -64,11 +75,25 @@ jobs:
       - name: Compute today's local (Europe/Warsaw) date
         id: date
         run: |
-          OVERRIDE="${{ github.event.inputs.date }}"
-          if [ -n "$OVERRIDE" ]; then
-            echo "date=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            # Use the phone's own $DATE (computed at upload time) as authoritative instead of
+            # re-deriving "today" a second time on a different machine moments later - the same
+            # class of hardening this project has repeatedly needed elsewhere (see the schedule
+            # comment above, and fix/tx4-cron-dst-offset).
+            PAYLOAD_DATE="${{ github.event.client_payload.date }}"
+            if [ -n "$PAYLOAD_DATE" ]; then
+              echo "date=$PAYLOAD_DATE" >> "$GITHUB_OUTPUT"
+            else
+              echo "::notice::repository_dispatch fired without client_payload.date - falling back to runner's local date"
+              echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+            fi
           else
-            echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+            OVERRIDE="${{ github.event.inputs.date }}"
+            if [ -n "$OVERRIDE" ]; then
+              echo "date=$OVERRIDE" >> "$GITHUB_OUTPUT"
+            else
+              echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Check for an existing release (idempotency guard)
