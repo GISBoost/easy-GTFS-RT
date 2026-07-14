@@ -1,20 +1,28 @@
-name: Łódź — build (phone)
+name: GTFS-RT — build (phone)
+
+run-name: "${{ github.event.client_payload.city || github.event.inputs.city || 'scheduled' }} — build (phone)"
 
 on:
   # Primary trigger (TX-7): sweep_and_upload.sh (Termux, TX-3) fires this event via a plain
   # `curl -X POST .../dispatches` call immediately after it finishes uploading today's raw
   # recordings, so the build starts within seconds instead of waiting for the schedule below.
+  # Since TX-8, the payload carries `city` alongside `date` - one dispatch per city that actually
+  # had something new to upload that sweep.
   repository_dispatch:
     types: [phone-sweep-complete]
 
   # Fallback safety net, kept deliberately even though repository_dispatch is now primary: covers
   # the case where the phone's dispatch call itself fails (network hiccup right after upload, an
   # expired GH_TOKEN - which also silently disables the dispatch call, not just the upload).
-  # Safe to keep alongside the primary trigger: `concurrency:` below (`cancel-in-progress: false`)
-  # serializes every trigger of this same workflow regardless of type, so a same-day dispatch run
-  # and a stray schedule run never race - whichever finishes second just finds today's release
-  # already published (the idempotency guard below) and exits as a fast no-op, no duplicate
-  # WhatsApp message.
+  # Safe to keep alongside the primary trigger: `concurrency:` below (`cancel-in-progress: false`,
+  # keyed per city since TX-8) serializes every trigger of this same workflow for the same city
+  # regardless of trigger type, so a same-day dispatch run and a stray schedule run never race -
+  # whichever finishes second just finds today's release already published (the idempotency guard
+  # below) and exits as a fast no-op, no duplicate WhatsApp message.
+  #
+  # Since TX-8, a plain schedule fire has no city in its payload, so `resolve_targets` below
+  # expands it to *every* city in config/cities.json - each city's own idempotency guard makes an
+  # already-built city a fast no-op, so this scales to N cities without per-city cron entries.
   #
   # This reintroduces the same class of risk `family_a_build_and_notify.yml` (FA-8) deliberately
   # dropped its own 23:45 schedule fallback for on 2026-07-13 (Michał decision, see that file's
@@ -24,8 +32,8 @@ on:
   # primary trigger instead; this workflow's own primary trigger is now repository_dispatch above,
   # which doesn't have this midnight-rollover risk (it fires within seconds of upload, and reads
   # the date from the phone's own payload, not the runner's clock) - so this schedule only matters
-  # as a rarely-exercised fallback. Also mitigated by the `workflow_dispatch` date override below
-  # for manual recovery, and by TX-6 (separate milestone) monitoring for a missing release.
+  # as a rarely-exercised fallback. Also mitigated by the `workflow_dispatch` date/city override
+  # below for manual recovery, and by the healthcheck workflow monitoring for a missing release.
   schedule:
     - cron: "15 20 * * *"   # 22:15 CEST (summer, UTC+2). GitHub Actions cron has no DST
                             # awareness, so this needs a manual flip to "15 21 * * *" (22:15 CET,
@@ -36,26 +44,112 @@ on:
     inputs:
       date:
         description: >-
-          Override RECORDING_DATE (YYYY-MM-DD) for a manual run — leave empty to use today's
+          Override the target date (YYYY-MM-DD) for a manual run — leave empty to use today's
           Europe/Warsaw date. Useful when testing after local midnight has rolled over past the
           day whose recordings you actually want to build.
         required: false
         default: ""
-
-concurrency:
-  # Own group, not shared with FA-8's `family-a-build-and-notify` — the two tracks publish to
-  # distinct tags and have no shared idempotency risk to serialize against.
-  group: family-a-build-and-notify-phone
-  cancel-in-progress: false
+      city:
+        description: >-
+          Restrict this run to one city id from config/cities.json (e.g. "lodz") — leave empty to
+          build every configured city (same as the schedule fallback's behavior).
+        required: false
+        default: ""
 
 jobs:
+  resolve_targets:
+    # Runs once per workflow trigger (not per city) to compute the target date and the list of
+    # cities the build_and_notify matrix below should cover - TX-8's generalization of the old
+    # single-city "Compute today's local date" step.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      date: ${{ steps.resolve.outputs.date }}
+      cities: ${{ steps.resolve.outputs.cities }}
+    steps:
+      - name: Checkout this repo (for config/cities.json)
+        uses: actions/checkout@v4
+
+      - name: Resolve target date and cities
+        id: resolve
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            # Use the phone's own $DATE (computed at upload time) as authoritative instead of
+            # re-deriving "today" a second time on a different machine moments later - the same
+            # class of hardening this project has repeatedly needed elsewhere (see the schedule
+            # comment above, and fix/tx4-cron-dst-offset).
+            PAYLOAD_DATE="${{ github.event.client_payload.date }}"
+            if [ -n "$PAYLOAD_DATE" ]; then
+              DATE="$PAYLOAD_DATE"
+            else
+              echo "::notice::repository_dispatch fired without client_payload.date - falling back to runner's local date"
+              DATE="$(TZ=Europe/Warsaw date +%F)"
+            fi
+          else
+            OVERRIDE="${{ github.event.inputs.date }}"
+            if [ -n "$OVERRIDE" ]; then
+              DATE="$OVERRIDE"
+            else
+              DATE="$(TZ=Europe/Warsaw date +%F)"
+            fi
+          fi
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+          # Cities (TX-8): a repository_dispatch always names exactly one city (the one
+          # sweep_and_upload.sh just uploaded for); a workflow_dispatch may optionally restrict to
+          # one; anything else (plain schedule fire, or workflow_dispatch with no city override)
+          # targets every city in config/cities.json - each leg's own idempotency guard (below)
+          # makes an already-built city a fast no-op, which is what makes this safe as a fallback.
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            CITY="${{ github.event.client_payload.city }}"
+            if [ -z "$CITY" ]; then
+              echo "::error::repository_dispatch fired without client_payload.city - sweep_and_upload.sh (easy-OTP) must send it; refusing to guess"
+              exit 1
+            fi
+            if ! jq -e --arg c "$CITY" 'has($c)' config/cities.json >/dev/null; then
+              echo "::error::city '${CITY}' from the dispatch payload is not a key in config/cities.json - either a typo in the phone's cities/ directory, or cities.json needs a new entry for it first"
+              exit 1
+            fi
+            CITIES_JSON="[\"${CITY}\"]"
+          else
+            OVERRIDE_CITY="${{ github.event.inputs.city }}"
+            if [ -n "$OVERRIDE_CITY" ]; then
+              if ! jq -e --arg c "$OVERRIDE_CITY" 'has($c)' config/cities.json >/dev/null; then
+                echo "::error::city '${OVERRIDE_CITY}' is not a key in config/cities.json"
+                exit 1
+              fi
+              CITIES_JSON="[\"${OVERRIDE_CITY}\"]"
+            else
+              CITIES_JSON="$(jq -c 'keys' config/cities.json)"
+            fi
+          fi
+          echo "cities=$CITIES_JSON" >> "$GITHUB_OUTPUT"
+
   build_and_notify:
+    needs: resolve_targets
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false   # one city's failure must not cancel the others' builds
+      matrix:
+        city: ${{ fromJson(needs.resolve_targets.outputs.cities) }}
+    concurrency:
+      # Keyed per city (TX-8, was a single fixed group name) - two different cities dispatched
+      # close together must not serialize against each other for no reason. Own group namespace,
+      # not shared with FA-8's `family-a-build-and-notify` - the two tracks publish to distinct
+      # tags and have no shared idempotency risk to serialize against.
+      group: family-a-build-and-notify-phone-${{ matrix.city }}
+      cancel-in-progress: false
     permissions:
       contents: write   # required for `gh release create`/`gh release download` in this repo
     env:
       GH_TOKEN: ${{ github.token }}
+      DATE: ${{ needs.resolve_targets.outputs.date }}
+      CITY: ${{ matrix.city }}
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v4
@@ -72,35 +166,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Compute today's local (Europe/Warsaw) date
-        id: date
+      - name: Look up city config
+        id: city
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            # Use the phone's own $DATE (computed at upload time) as authoritative instead of
-            # re-deriving "today" a second time on a different machine moments later - the same
-            # class of hardening this project has repeatedly needed elsewhere (see the schedule
-            # comment above, and fix/tx4-cron-dst-offset).
-            PAYLOAD_DATE="${{ github.event.client_payload.date }}"
-            if [ -n "$PAYLOAD_DATE" ]; then
-              echo "date=$PAYLOAD_DATE" >> "$GITHUB_OUTPUT"
-            else
-              echo "::notice::repository_dispatch fired without client_payload.date - falling back to runner's local date"
-              echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            OVERRIDE="${{ github.event.inputs.date }}"
-            if [ -n "$OVERRIDE" ]; then
-              echo "date=$OVERRIDE" >> "$GITHUB_OUTPUT"
-            else
-              echo "date=$(TZ=Europe/Warsaw date +%F)" >> "$GITHUB_OUTPUT"
-            fi
-          fi
+          set -euo pipefail
+          DISPLAY_NAME="$(jq -r --arg c "$CITY" '.[$c].display_name' config/cities.json)"
+          STATIC_URL="$(jq -r --arg c "$CITY" '.[$c].static_gtfs_url' config/cities.json)"
+          echo "display_name=$DISPLAY_NAME" >> "$GITHUB_OUTPUT"
+          echo "static_gtfs_url=$STATIC_URL" >> "$GITHUB_OUTPUT"
 
       - name: Check for an existing release (idempotency guard)
         id: existing_release
         run: |
           set -euo pipefail
-          TAG="lodz-realized-${{ steps.date.outputs.date }}-phone"
+          TAG="${CITY}-realized-${DATE}-phone"
           if gh release view "$TAG" >/dev/null 2>err.log; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release $TAG already exists - this day was already built (likely by an earlier manual run); skipping the rest of this run."
@@ -131,18 +210,17 @@ jobs:
 
       - name: Download fresh static GTFS
         if: steps.existing_release.outputs.exists != 'true'
-        run: curl -fsSL -o static_gtfs.zip "${{ vars.LODZ_STATIC_GTFS_URL }}"
+        run: curl -fsSL -o static_gtfs.zip "${{ steps.city.outputs.static_gtfs_url }}"
 
       - name: Download today's raw recordings from the phone's release
         id: collect
         if: steps.existing_release.outputs.exists != 'true'
         run: |
           set -euo pipefail
-          DATE="${{ steps.date.outputs.date }}"
-          TAG="positions-raw-${DATE}"
+          TAG="positions-raw-${CITY}-${DATE}"
           mkdir -p raw
           gh release download "$TAG" --dir raw --pattern "*.zip" \
-            || { echo "::error::No raw-data release found for tag ${TAG} - did TX-3's sweep run on the phone today?"; exit 1; }
+            || { echo "::error::No raw-data release found for tag ${TAG} - did TX-3's sweep run on the phone today for ${CITY}?"; exit 1; }
 
           DIRS=()
           for ZIP in raw/*.zip; do
@@ -165,9 +243,9 @@ jobs:
 
           echo "count=${#DIRS[@]}" >> "$GITHUB_OUTPUT"
           # Space-separated list, consumed word-split by `match` below - safe here since TX-3's
-          # zip names (positions_<date>_<time>) never contain spaces.
+          # zip names (positions_<city>_<date>_<time>) never contain spaces.
           echo "dirs=${DIRS[*]}" >> "$GITHUB_OUTPUT"
-          echo "Found ${#DIRS[@]} recording director$( [ "${#DIRS[@]}" -eq 1 ] && echo y || echo ies ) from the phone for ${DATE}"
+          echo "Found ${#DIRS[@]} recording director$( [ "${#DIRS[@]}" -eq 1 ] && echo y || echo ies ) from the phone for ${CITY} ${DATE}"
 
       - name: Compute actual recorded time coverage
         id: coverage
@@ -259,7 +337,7 @@ jobs:
           python -m family_a.cli match \
             "${args[@]}" \
             --static "../../../static_gtfs.zip" \
-            --out "matched_${{ steps.date.outputs.date }}.csv" \
+            --out "matched_${CITY}_${DATE}.csv" \
             | tee "../../../match_output.log"
 
           # FA-8 spec requires a failure notification (not a silent "success") when match finds
@@ -281,9 +359,9 @@ jobs:
         run: |
           set -euo pipefail
           python -m family_a.cli build \
-            --matched "matched_${{ steps.date.outputs.date }}.csv" \
+            --matched "matched_${CITY}_${DATE}.csv" \
             --static "../../../static_gtfs.zip" \
-            --out-prefix "../../../lodz_realized_${{ steps.date.outputs.date }}" \
+            --out-prefix "../../../${CITY}_realized_${DATE}" \
             | tee "../../../build_output.log"
           CORRECTED=$(grep '^Segments corrected:' "../../../build_output.log" | grep -oE '[0-9]+' || echo 0)
           echo "segments_corrected=${CORRECTED:-0}" >> "$GITHUB_OUTPUT"
@@ -292,20 +370,20 @@ jobs:
         if: steps.existing_release.outputs.exists != 'true'
         run: |
           set -euo pipefail
-          DATE="${{ steps.date.outputs.date }}"
           COUNT="${{ steps.collect.outputs.count }}"
           MATCHED="${{ steps.match.outputs.matched_count }}"
           CORRECTED="${{ steps.build.outputs.segments_corrected }}"
           COVERAGE="${{ steps.coverage.outputs.coverage }}"
+          DISPLAY_NAME="${{ steps.city.outputs.display_name }}"
           # Renamed (not uploaded as-is, and not via `gh release create`'s `path#label` syntax,
           # which only changes the displayed label, not the downloaded filename) so every day's
           # static feed downloads under a distinct, dated name instead of all colliding on the
           # generic local filename `static_gtfs.zip` once saved locally.
-          cp static_gtfs.zip "lodz_static_gtfs_${DATE}.zip"
-          gh release create "lodz-realized-${DATE}-phone" \
-            "lodz_realized_${DATE}_p50.zip" "lodz_realized_${DATE}_p85.zip" \
-            "lodz_static_gtfs_${DATE}.zip" \
-            --title "Łódź — ${DATE} — realized GTFS (phone)" \
+          cp static_gtfs.zip "${CITY}_static_gtfs_${DATE}.zip"
+          gh release create "${CITY}-realized-${DATE}-phone" \
+            "${CITY}_realized_${DATE}_p50.zip" "${CITY}_realized_${DATE}_p85.zip" \
+            "${CITY}_static_gtfs_${DATE}.zip" \
+            --title "${DISPLAY_NAME} — ${DATE} — realized GTFS (phone)" \
             --notes "Automated build from phone-recorded data (TX-2/TX-3). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Actual recorded coverage: ${COVERAGE}. Static GTFS as downloaded and used for this day's match/build also attached, for comparison across days if the source agency's trip_id generation drifts (see FA-6). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
 
       - name: Delete the phone's now-consumed raw-data release
@@ -323,9 +401,9 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
-          TAG="positions-raw-${{ steps.date.outputs.date }}"
+          TAG="positions-raw-${CITY}-${DATE}"
           if gh release delete "$TAG" --yes --cleanup-tag; then
-            echo "Deleted raw-data release ${TAG} (superseded by lodz-realized-${{ steps.date.outputs.date }}-phone)"
+            echo "Deleted raw-data release ${TAG} (superseded by ${CITY}-realized-${DATE}-phone)"
           else
             echo "::warning::Failed to delete raw-data release ${TAG} - not fatal, safe to clean up manually or leave for a later run"
           fi
@@ -334,15 +412,15 @@ jobs:
         if: success() && steps.existing_release.outputs.exists != 'true'
         run: |
           set -euo pipefail
-          DATE="${{ steps.date.outputs.date }}"
           COUNT="${{ steps.collect.outputs.count }}"
           MATCHED="${{ steps.match.outputs.matched_count }}"
           CORRECTED="${{ steps.build.outputs.segments_corrected }}"
           COVERAGE="${{ steps.coverage.outputs.coverage }}"
-          P50_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}-phone/lodz_realized_${DATE}_p50.zip"
-          P85_URL="https://github.com/${{ github.repository }}/releases/download/lodz-realized-${DATE}-phone/lodz_realized_${DATE}_p85.zip"
-          TEXT=$(printf 'Lodz GTFS-RT (%s) ready. Coverage: %s\n%s recording director%s merged, %s observations matched, %s segments corrected.\nP50: %s\nP85: %s' \
-            "${DATE}" "${COVERAGE}" "${COUNT}" "$([ "${COUNT}" = "1" ] && echo y || echo ies)" \
+          DISPLAY_NAME="${{ steps.city.outputs.display_name }}"
+          P50_URL="https://github.com/${{ github.repository }}/releases/download/${CITY}-realized-${DATE}-phone/${CITY}_realized_${DATE}_p50.zip"
+          P85_URL="https://github.com/${{ github.repository }}/releases/download/${CITY}-realized-${DATE}-phone/${CITY}_realized_${DATE}_p85.zip"
+          TEXT=$(printf '%s GTFS-RT (%s) ready. Coverage: %s\n%s recording director%s merged, %s observations matched, %s segments corrected.\nP50: %s\nP85: %s' \
+            "${DISPLAY_NAME}" "${DATE}" "${COVERAGE}" "${COUNT}" "$([ "${COUNT}" = "1" ] && echo y || echo ies)" \
             "${MATCHED}" "${CORRECTED}" \
             "${P50_URL}" "${P85_URL}")
           curl -sS -G "https://api.callmebot.com/whatsapp.php" \
@@ -354,7 +432,11 @@ jobs:
         if: failure()
         run: |
           set -euo pipefail
-          TEXT="Lodz GTFS-RT (${{ steps.date.outputs.date }}) build FAILED - check Actions log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # steps.city may not have run yet if failure happened earlier (e.g. checkout itself
+          # failed) - fall back to the raw city id rather than an empty display name.
+          DISPLAY_NAME="${{ steps.city.outputs.display_name }}"
+          DISPLAY_NAME="${DISPLAY_NAME:-$CITY}"
+          TEXT="${DISPLAY_NAME} GTFS-RT (${DATE}) build FAILED - check Actions log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -sS -G "https://api.callmebot.com/whatsapp.php" \
             --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
             --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
