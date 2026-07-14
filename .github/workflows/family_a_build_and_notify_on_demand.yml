@@ -1,13 +1,14 @@
 name: Łódź — build (on-demand)
 
 on:
-  # Manual-only trigger. This is the backup path for when family_a_build_and_notify.yml's
-  # workflow_run trigger doesn't fire for a given day (e.g. chunk4 itself failed to run, or its
-  # workflow_run event was missed) - that workflow no longer has a time-based fallback of its
-  # own (a 23:45 CEST cron was removed on 2026-07-13 after GitHub's schedule-queue delay pushed
-  # it past local midnight, causing it to compute the wrong day and fail spuriously - see that
-  # workflow's `on:` comment). Run this by hand from the Actions tab once the day's chunks (and
-  # any FA-9 extras) are done recording.
+  # RETIRED 2026-07-14, along with the FA-7 chunk workflows this depended on (deleted): this was
+  # the manual backup path for when family_a_build_and_notify.yml's workflow_run trigger didn't
+  # fire for a given day. Recording moved to the Termux phone track (see easy-OTP's
+  # docs/prd/PR_easy-OTP_termux-migration.md) - family_a_build_and_notify_from_phone.yml is the
+  # actively used equivalent now. This workflow is left in the repo for reference only: it
+  # discovers input by `positions-<date>-*` GitHub Actions artifact name prefix, which only the
+  # now-deleted chunk workflows ever produced - running this by hand today will fail at "no
+  # artifacts found" unless something else starts producing matching-prefixed artifacts again.
   workflow_dispatch:
     inputs:
       date:
