@@ -386,6 +386,56 @@ jobs:
             --title "${DISPLAY_NAME} — ${DATE} — realized GTFS (phone)" \
             --notes "Automated build from phone-recorded data (TX-2/TX-3). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Actual recorded coverage: ${COVERAGE}. Static GTFS as downloaded and used for this day's match/build also attached, for comparison across days if the source agency's trip_id generation drifts (see FA-6). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
 
+      - name: Install diff-chart dependencies
+        # Own requirements.txt (tools/analysis, matplotlib only) - deliberately NOT merged into
+        # family_a_reconstruction/requirements.txt, which TX-1 also installs on the Termux phone
+        # (matplotlib has no prebuilt wheel for Android's Bionic libc and is never needed there;
+        # this runner is the only place a chart is ever rendered). Best-effort: this is a
+        # nice-to-have enrichment of an already-published release, never allowed to affect
+        # whether the release itself (already created above) is considered a success.
+        id: chart_deps
+        if: success() && steps.existing_release.outputs.exists != 'true'
+        continue-on-error: true
+        run: pip install -r easy-otp-src/tools/analysis/requirements.txt
+
+      - name: Generate static-vs-realized diff chart
+        # P50 only for now (not P85) - keeps this step's runtime and release-asset count down;
+        # the CLI (tools/analysis/gtfs_static_vs_realized_diff.py) can be pointed at the P85 zip
+        # the same way if that's ever wanted too. continue-on-error: this can legitimately "fail"
+        # in benign ways (RuntimeError when the recording produced zero matched stop_times rows -
+        # see the script's own error message) and must never take down a build whose actual GTFS
+        # release already succeeded above.
+        id: diff_chart
+        if: success() && steps.existing_release.outputs.exists != 'true' && steps.chart_deps.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          python easy-otp-src/tools/analysis/gtfs_static_vs_realized_diff.py \
+            --static static_gtfs.zip \
+            --realized "${CITY}_realized_${DATE}_p50.zip" \
+            --out-prefix "${CITY}_diff_${DATE}_p50"
+
+      - name: Upload diff chart to the release (best-effort)
+        # Attached to the SAME release Publish already created above, via `gh release upload`
+        # (not folded into the `gh release create` call itself) - so a chart-generation failure
+        # can never block or retroactively invalidate the GTFS release, which is the thing that
+        # actually matters. `--clobber` makes a manual re-run of just this step idempotent.
+        if: success() && steps.existing_release.outputs.exists != 'true' && steps.diff_chart.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          TAG="${CITY}-realized-${DATE}-phone"
+          ASSETS=()
+          for f in "${CITY}_diff_${DATE}_p50_chart.png" "${CITY}_diff_${DATE}_p50_detail.csv" "${CITY}_diff_${DATE}_p50_summary.csv"; do
+            [ -f "$f" ] && ASSETS+=("$f")
+          done
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::warning::No diff-chart output files found to upload (the chart specifically is skipped whenever every matched stop_times row had delay_sec == 0 - see the script's own printed message in the previous step's log). Not fatal - the GTFS release itself already succeeded."
+            exit 0
+          fi
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber \
+            || echo "::warning::gh release upload for the diff chart failed - not fatal, the GTFS release itself already succeeded."
+
       - name: Delete the phone's now-consumed raw-data release
         # Unlike FA-7 (whose raw artifacts self-expire via retention-days: 2), TX-3 uploads raw
         # recordings as a GitHub Release via plain curl (to avoid installing `gh` on the phone),
