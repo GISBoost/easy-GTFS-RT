@@ -38,9 +38,5 @@
   "lisbon": {
     "display_name": "Lisbon",
     "static_gtfs_url": "https://gateway.carris.pt/gateway/gtfs/api/v2.11/GTFS"
-  },
-  "amsterdam": {
-    "display_name": "Amsterdam",
-    "static_gtfs_url": "http://gtfs.ovapi.nl/gtfs-nl.zip"
   }
 }
