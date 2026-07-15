@@ -426,7 +426,7 @@ jobs:
           set -uo pipefail
           TAG="${CITY}-realized-${DATE}-phone"
           ASSETS=()
-          for f in "${CITY}_diff_${DATE}_p50_chart.png" "${CITY}_diff_${DATE}_p50_detail.csv" "${CITY}_diff_${DATE}_p50_summary.csv"; do
+          for f in "${CITY}_diff_${DATE}_p50_chart.png" "${CITY}_diff_${DATE}_p50_summary.csv"; do
             [ -f "$f" ] && ASSETS+=("$f")
           done
           if [ "${#ASSETS[@]}" -eq 0 ]; then
