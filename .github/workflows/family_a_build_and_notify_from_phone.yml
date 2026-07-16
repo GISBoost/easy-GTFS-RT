@@ -410,10 +410,12 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
+          DISPLAY_NAME="${{ steps.city.outputs.display_name }}"
           python easy-otp-src/tools/analysis/gtfs_static_vs_realized_diff.py \
             --static static_gtfs.zip \
             --realized "${CITY}_realized_${DATE}_p50.zip" \
-            --out-prefix "${CITY}_diff_${DATE}_p50"
+            --out-prefix "${CITY}_diff_${DATE}_p50" \
+            --chart-title-prefix "${DISPLAY_NAME} — ${DATE}"
 
       - name: Upload diff chart to the release (best-effort)
         # Attached to the SAME release Publish already created above, via `gh release upload`
