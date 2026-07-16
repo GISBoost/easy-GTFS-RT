@@ -166,6 +166,16 @@ jobs:
           echo "display_name=$DISPLAY_NAME" >> "$GITHUB_OUTPUT"
           echo "static_gtfs_url=$STATIC_URL" >> "$GITHUB_OUTPUT"
 
+          # Optional per-city route_ids to drop before matching (space-separated, safe here -
+          # route_id values in this repo's cities.json are always plain alphanumeric strings, no
+          # spaces) - see family_a.matcher.load_trip_shape_index's docstring: for a route whose
+          # real-time trip_id isn't a reliable one-trip-per-day identifier (e.g. Bucharest's
+          # Metrorex metro, discovered 2026-07-16 - its trip_id recurs for unrelated departures
+          # hours apart, corrupting the naive trajectory matcher into stitching them into one
+          # fictitious multi-hour "trip"). Empty when a city has no exclude_route_ids key.
+          EXCLUDE_ROUTE_IDS="$(jq -r --arg c "$CITY" '.[$c].exclude_route_ids // [] | join(" ")' config/cities.json)"
+          echo "exclude_route_ids=$EXCLUDE_ROUTE_IDS" >> "$GITHUB_OUTPUT"
+
       - name: Check for an existing release (idempotency guard)
         id: existing_release
         run: |
@@ -330,6 +340,9 @@ jobs:
           for d in ${{ steps.collect.outputs.dirs }}; do
             args+=(--positions-dir "../../../${d}")
           done
+          for r in ${{ steps.city.outputs.exclude_route_ids }}; do
+            args+=(--exclude-route-id "$r")
+          done
           python -m family_a.cli match \
             "${args[@]}" \
             --static "../../../static_gtfs.zip" \
@@ -407,11 +420,16 @@ jobs:
         run: |
           set -uo pipefail
           DISPLAY_NAME="${{ steps.city.outputs.display_name }}"
+          diff_args=()
+          for r in ${{ steps.city.outputs.exclude_route_ids }}; do
+            diff_args+=(--exclude-route-id "$r")
+          done
           python easy-otp-src/tools/analysis/gtfs_static_vs_realized_diff.py \
             --static static_gtfs.zip \
             --realized "${CITY}_realized_${DATE}_p50.zip" \
             --out-prefix "${CITY}_diff_${DATE}_p50" \
-            --chart-title-prefix "${DISPLAY_NAME} — ${DATE}"
+            --chart-title-prefix "${DISPLAY_NAME} — ${DATE}" \
+            "${diff_args[@]}"
 
       - name: Upload diff chart to the release (best-effort)
         # Attached to the SAME release Publish already created above, via `gh release upload`

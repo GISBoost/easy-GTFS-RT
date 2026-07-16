@@ -36,7 +36,8 @@
   "bucharest": {
     "display_name": "Bucharest",
     "static_gtfs_url": "https://gtfs.tpbi.ro/regional/BUCHAREST-REGION.zip",
-    "timezone": "Europe/Bucharest"
+    "timezone": "Europe/Bucharest",
+    "exclude_route_ids": ["968", "969", "970", "971", "999"]
   },
   "lisbon": {
     "display_name": "Lisbon",
