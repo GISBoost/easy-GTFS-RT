@@ -38,5 +38,13 @@
   "lisbon": {
     "display_name": "Lisbon",
     "static_gtfs_url": "https://gateway.carris.pt/gateway/gtfs/api/v2.11/GTFS"
+  },
+  "boston": {
+    "display_name": "Boston",
+    "static_gtfs_url": "https://cdn.mbta.com/MBTA_GTFS.zip"
+  },
+  "brisbane": {
+    "display_name": "Brisbane",
+    "static_gtfs_url": "https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip"
   }
 }
