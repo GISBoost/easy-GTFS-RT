@@ -3,43 +3,33 @@ name: GTFS-RT — build (phone)
 run-name: "${{ github.event.client_payload.city || github.event.inputs.city || 'scheduled' }} — build (phone)"
 
 on:
-  # Primary trigger (TX-7): sweep_and_upload.sh (Termux, TX-3) fires this event via a plain
-  # `curl -X POST .../dispatches` call immediately after it finishes uploading today's raw
-  # recordings, so the build starts within seconds instead of waiting for the schedule below.
-  # Since TX-8, the payload carries `city` alongside `date` - one dispatch per city that actually
-  # had something new to upload that sweep.
+  # Primary (and, since 2026-07-16, sole automatic) trigger: sweep_and_upload.sh (Termux, TX-3)
+  # fires this event via a plain `curl -X POST .../dispatches` call immediately after it finishes
+  # uploading today's raw recordings, so the build starts within seconds. Since TX-8, the payload
+  # carries `city` alongside `date` - one dispatch per city that actually had something new to
+  # upload (or, since 2026-07-16, still needed its dispatch retried - see sweep_and_upload.sh's
+  # DISPATCH_MARKER) that sweep.
+  #
+  # A `schedule:` fallback (22:15 Europe/Warsaw) used to sit here as a safety net for a dispatch
+  # call that fails after its upload already succeeded. Removed 2026-07-16 for two reasons: (1) a
+  # single fixed Warsaw-time trigger cannot safely cover cities far from Warsaw's offset - Boston
+  # (UTC-4 in July) doesn't even close its recording window until Warsaw-local ~04:00 the *next*
+  # day, so the old 22:15 fallback could only ever catch it a full day late; (2) the gap it
+  # existed to cover (upload succeeds, dispatch curl fails) is now closed at the source instead -
+  # sweep_and_upload.sh retries a failed dispatch on every subsequent 15-minute tick until it
+  # succeeds, the same reliability class its upload retries already had, which makes a
+  # once-daily GitHub-side fallback redundant. Direct precedent already in this codebase:
+  # `family_a_build_and_notify.yml` (FA-8, commit `e7dba56`, 2026-07-13) dropped an almost
+  # identical 23:45-Warsaw fallback after a real incident - the schedule queue delayed that run
+  # past local midnight, its date computation resolved to the wrong day, and it fired a spurious
+  # failure notification for a day that had already built successfully via the primary trigger
+  # minutes earlier. Manual recovery (e.g. `repository_dispatch` never fires at all, or a
+  # multi-day gap) is still covered by `workflow_dispatch` below, same as FA-8's replacement
+  # (`family_a_build_and_notify_on_demand.yml`) - no separate on-demand workflow needed here since
+  # this one already has that input built in.
   repository_dispatch:
     types: [phone-sweep-complete]
 
-  # Fallback safety net, kept deliberately even though repository_dispatch is now primary: covers
-  # the case where the phone's dispatch call itself fails (network hiccup right after upload, an
-  # expired GH_TOKEN - which also silently disables the dispatch call, not just the upload).
-  # Safe to keep alongside the primary trigger: `concurrency:` below (`cancel-in-progress: false`,
-  # keyed per city since TX-8) serializes every trigger of this same workflow for the same city
-  # regardless of trigger type, so a same-day dispatch run and a stray schedule run never race -
-  # whichever finishes second just finds today's release already published (the idempotency guard
-  # below) and exits as a fast no-op, no duplicate WhatsApp message.
-  #
-  # Since TX-8, a plain schedule fire has no city in its payload, so `resolve_targets` below
-  # expands it to *every* city in config/cities.json - each city's own idempotency guard makes an
-  # already-built city a fast no-op, so this scales to N cities without per-city cron entries.
-  #
-  # This reintroduces the same class of risk `family_a_build_and_notify.yml` (FA-8) deliberately
-  # dropped its own 23:45 schedule fallback for on 2026-07-13 (Michał decision, see that file's
-  # history): a delayed scheduled run whose `TZ=Europe/Warsaw date +%F` rolls past local midnight
-  # resolves to *tomorrow's* date and fails on "no release found yet" for a day that hasn't
-  # recorded. FA-8 could simply drop its fallback because it has `workflow_run` as a reliable
-  # primary trigger instead; this workflow's own primary trigger is now repository_dispatch above,
-  # which doesn't have this midnight-rollover risk (it fires within seconds of upload, and reads
-  # the date from the phone's own payload, not the runner's clock) - so this schedule only matters
-  # as a rarely-exercised fallback. Also mitigated by the `workflow_dispatch` date/city override
-  # below for manual recovery, and by the healthcheck workflow monitoring for a missing release.
-  schedule:
-    - cron: "15 20 * * *"   # 22:15 CEST (summer, UTC+2). GitHub Actions cron has no DST
-                            # awareness, so this needs a manual flip to "15 21 * * *" (22:15 CET,
-                            # winter, UTC+1) when Europe/Warsaw switches off summer time, and back
-                            # again in spring — 21:15 UTC (the previous value here) is 23:15 CEST,
-                            # not 22:15, which was a real off-by-one-hour bug caught in review.
   workflow_dispatch:
     inputs:
       date:
@@ -80,8 +70,9 @@ jobs:
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             # Use the phone's own $DATE (computed at upload time) as authoritative instead of
             # re-deriving "today" a second time on a different machine moments later - the same
-            # class of hardening this project has repeatedly needed elsewhere (see the schedule
-            # comment above, and fix/tx4-cron-dst-offset).
+            # class of hardening this project has repeatedly needed elsewhere (see
+            # fix/tx4-cron-dst-offset, and the trigger comment above for why the schedule
+            # fallback that used to need this same care was removed instead of fixed).
             PAYLOAD_DATE="${{ github.event.client_payload.date }}"
             if [ -n "$PAYLOAD_DATE" ]; then
               DATE="$PAYLOAD_DATE"
@@ -101,9 +92,9 @@ jobs:
 
           # Cities (TX-8): a repository_dispatch always names exactly one city (the one
           # sweep_and_upload.sh just uploaded for); a workflow_dispatch may optionally restrict to
-          # one; anything else (plain schedule fire, or workflow_dispatch with no city override)
-          # targets every city in config/cities.json - each leg's own idempotency guard (below)
-          # makes an already-built city a fast no-op, which is what makes this safe as a fallback.
+          # one, or target every city in config/cities.json if left empty (e.g. a manual
+          # catch-up run) - each leg's own idempotency guard (below) makes an already-built city a
+          # fast no-op either way.
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             CITY="${{ github.event.client_payload.city }}"
             if [ -z "$CITY" ]; then

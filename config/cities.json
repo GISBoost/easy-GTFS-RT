@@ -25,26 +25,32 @@
   },
   "vilnius": {
     "display_name": "Vilnius",
-    "static_gtfs_url": "http://www.stops.lt/vilnius/vilnius/gtfs.zip"
+    "static_gtfs_url": "http://www.stops.lt/vilnius/vilnius/gtfs.zip",
+    "timezone": "Europe/Vilnius"
   },
   "sofia": {
     "display_name": "Sofia",
-    "static_gtfs_url": "https://gtfs.sofiatraffic.bg/api/v1/static"
+    "static_gtfs_url": "https://gtfs.sofiatraffic.bg/api/v1/static",
+    "timezone": "Europe/Sofia"
   },
   "bucharest": {
     "display_name": "Bucharest",
-    "static_gtfs_url": "https://gtfs.tpbi.ro/regional/BUCHAREST-REGION.zip"
+    "static_gtfs_url": "https://gtfs.tpbi.ro/regional/BUCHAREST-REGION.zip",
+    "timezone": "Europe/Bucharest"
   },
   "lisbon": {
     "display_name": "Lisbon",
-    "static_gtfs_url": "https://gateway.carris.pt/gateway/gtfs/api/v2.11/GTFS"
+    "static_gtfs_url": "https://gateway.carris.pt/gateway/gtfs/api/v2.11/GTFS",
+    "timezone": "Europe/Lisbon"
   },
   "boston": {
     "display_name": "Boston",
-    "static_gtfs_url": "https://cdn.mbta.com/MBTA_GTFS.zip"
+    "static_gtfs_url": "https://cdn.mbta.com/MBTA_GTFS.zip",
+    "timezone": "America/New_York"
   },
   "brisbane": {
     "display_name": "Brisbane",
-    "static_gtfs_url": "https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip"
+    "static_gtfs_url": "https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip",
+    "timezone": "Australia/Brisbane"
   }
 }
