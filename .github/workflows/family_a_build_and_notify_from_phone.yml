@@ -258,12 +258,17 @@ jobs:
           # as a visible gap instead of being silently assumed away.
           #
           # Unlike FA-8's version of this step (which runs on GitHub-hosted runners, always UTC,
-          # and re-tags naive timestamps as UTC before converting to Warsaw), the phone's system
-          # clock is confirmed to already be Europe/Warsaw local - recorder.py's
-          # `datetime.now().isoformat()` is invoked with no TZ override around the Python process
-          # itself (only the surrounding shell's `date` calls in record_supervised.sh force
-          # TZ=Europe/Warsaw). Re-tagging these already-local timestamps as UTC and converting
-          # again would double-shift them. Do not "fix" this to match FA-8's version.
+          # and re-tags naive timestamps as UTC before converting to Warsaw), these timestamps are
+          # already naive *local* time for whichever zone this city actually recorded in -
+          # record_supervised.sh (easy-OTP) now runs both its own `date` calls AND the
+          # `family_a.cli record` subprocess itself under `TZ="$ZONE"`, where $ZONE is that
+          # city's own cities/<city_id>.env TIMEZONE (falls back to Europe/Warsaw when unset -
+          # e.g. Lodz, Poznan, Szczecin). Before this fix (pre-2026-07-16), every city recorded
+          # and timestamped in Europe/Warsaw regardless of its own timezone, which silently
+          # shifted the real local recording window for any city not in CET/CEST (e.g. Vilnius/
+          # Sofia/Bucharest recorded 07:00-23:00 local, not 06:00-22:00; Lisbon 05:00-21:00).
+          # Re-tagging these already-local timestamps as UTC and converting again would
+          # double-shift them - do not "fix" this to match FA-8's version.
           import json
           import sys
           from pathlib import Path
