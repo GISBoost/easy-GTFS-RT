@@ -414,6 +414,15 @@ jobs:
         # in benign ways (RuntimeError when the recording produced zero matched stop_times rows -
         # see the script's own error message) and must never take down a build whose actual GTFS
         # release already succeeded above.
+        #
+        # --chart-start-hour/--chart-end-hour pinned to 6/22: without them, the script
+        # auto-crops the x-axis to whichever bucket actually has data that day (see its
+        # own module docstring), so a day whose recording started late or was cut short
+        # (phone killed overnight, sweep delay, etc.) produced a chart with a different
+        # axis window than a normal day - hard to compare across days at a glance. Every
+        # chart now always spans the same 06:00-22:00 window; a gap from an interrupted
+        # or delayed recording shows up as empty space (no bars/line) inside that fixed
+        # window instead of as a shorter axis.
         id: diff_chart
         if: success() && steps.existing_release.outputs.exists != 'true' && steps.chart_deps.outcome == 'success'
         continue-on-error: true
@@ -429,6 +438,7 @@ jobs:
             --realized "${CITY}_realized_${DATE}_p50.zip" \
             --out-prefix "${CITY}_diff_${DATE}_p50" \
             --chart-title-prefix "${DISPLAY_NAME} — ${DATE}" \
+            --chart-start-hour 6 --chart-end-hour 22 \
             "${diff_args[@]}"
 
       - name: Upload diff chart to the release (best-effort)
