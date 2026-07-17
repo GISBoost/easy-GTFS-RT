@@ -28,7 +28,7 @@ o przywróceniu nagrywania przez Actions.
   event, bez błędu.
 - Sekrety (`CALLMEBOT_PHONE`, `CALLMEBOT_APIKEY`) żyją w Settings tego repo, nie w kodzie.
 - **`config/cities.json` (TX-8)** to źródło prawdy które miasta buduje
-  `family_a_build_and_notify_from_phone.yml`/healthcheck — zastąpił dawne zmienne
+  `family_a_build_and_notify_from_phone.yml` — zastąpił dawne zmienne
   `LODZ_STATIC_GTFS_URL`/`LODZ_VEHICLE_POSITIONS_URL` w Settings (URL-e publiczne, nie sekrety,
   więc wersjonowanie w repo jest prostsze). Klucz (city id) musi się zgadzać dokładnie
   (case-sensitive) z `city` w `client_payload` dispatcha z telefonu i z nazwą

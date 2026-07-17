@@ -23,9 +23,9 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
 
 ## Multi-city support (TX-8)
 
-The phone-build workflow (`family_a_build_and_notify_from_phone.yml`) and the healthcheck
-(`family_a_phone_healthcheck.yml`) support recording/building more than one city from the same
-phone in parallel. **`config/cities.json`** (versioned in this repo) is the single source of
+The phone-build workflow (`family_a_build_and_notify_from_phone.yml`) supports
+recording/building more than one city from the same phone in parallel. **`config/cities.json`**
+(versioned in this repo) is the single source of
 truth for which cities are configured — each key is a city id (e.g. `"lodz"`) with a
 `display_name` and a `static_gtfs_url`. Release tags and filenames are all prefixed with the city
 id (`<city>-realized-<date>-phone`, `positions-raw-<city>-<date>`, etc.) instead of the old
@@ -58,25 +58,13 @@ Phone (Termux, easy-OTP)                          This repo (easy-GTFS-RT)
                                                     raw release, builds P50/P85 corrected GTFS,
                                                     publishes "<city>-realized-<date>-phone",
                                                     WhatsApp notify
-                                                    22:15  schedule fallback - expands to every
-                                                           city in config/cities.json; each
-                                                           city's idempotency guard makes an
-                                                           already-built one a fast no-op
-                                                    21:00  family_a_phone_healthcheck.yml alerts
-                                                           via WhatsApp, listing any city whose
-                                                           raw release is still missing
 ```
 
 - **`family_a_build_and_notify_from_phone.yml`** — builds and publishes the corrected GTFS, one
-  city per matrix leg. Triggered primarily by `repository_dispatch` (fired by the phone right
-  after upload — starts within seconds), with the `schedule:` cron kept only as a fallback for
-  when the phone's dispatch call itself fails, plus `workflow_dispatch` for manual runs/date/city
-  overrides. Same idempotency-guard and actual-recorded-coverage logic as the retired chunk-based
-  build below.
-- **`family_a_phone_healthcheck.yml`** — a separate scheduled check (21:00 Europe/Warsaw) that
-  alerts via WhatsApp if any configured city's raw release from the phone hasn't shown up yet, so
-  a silent phone-side failure (recording or upload) is caught from the reliable GitHub Actions
-  side.
+  city per matrix leg. Triggered by `repository_dispatch` (fired by the phone right after upload
+  — starts within seconds), plus `workflow_dispatch` for manual runs/date/city overrides (no
+  `schedule:` fallback — see its header comment for why that was dropped). Same idempotency-guard
+  and actual-recorded-coverage logic as the retired chunk-based build below.
 
 ## History: recording via GitHub Actions (FA-7/FA-8/FA-9, retired 2026-07-14)
 
@@ -125,10 +113,9 @@ equivalent lives entirely on the phone, in `~/easy-gtfs-rt-termux/cities/<city>.
 - `family_a_build_and_notify_from_phone.yml` accepts optional `date` and `city` inputs
   (`YYYY-MM-DD`, a `config/cities.json` key) to target a specific day/city instead of building
   every configured city for today - useful when testing, or recovering a day the
-  `repository_dispatch`/schedule triggers both missed. See `easy-OTP`'s
+  `repository_dispatch` trigger missed. See `easy-OTP`'s
   `docs/handoffs/termux-ssh_cheatsheet-for-michal.md` (section 12) for how to manually re-fire
   the `repository_dispatch` event itself from the phone.
-- `family_a_phone_healthcheck.yml` also has a bare `workflow_dispatch` for an on-demand check.
 
 A manually-triggered build does **not** get skipped by the idempotency guard unless a Release
 for that date/city already exists.
@@ -139,11 +126,6 @@ for that date/city already exists.
   WhatsApp notification silently fails to send — but the GitHub Release is still published
   either way. The Release is the source of truth; WhatsApp is a convenience notification on
   top of it, not the delivery mechanism itself.
-- **DST is not auto-compensated.** `cron:` schedules in this repo are UTC and hand-tuned for
-  the currently active offset (see the comment above each `cron:` line for the CET/CEST
-  equivalent) — they need a manual one-hour edit after each DST switch (last Sunday of
-  March/October). Since the phone-build workflow's primary trigger is now `repository_dispatch`
-  (not schedule-based), this only matters for its fallback path and for the healthcheck.
 - **The static GTFS is downloaded fresh every build**, never cached long-term — an open data
   feed has been observed (Łódź) to republish with a shifted `trip_id` generation between
   recording sessions, and reusing a stale static feed against newer recordings silently
@@ -158,6 +140,12 @@ for that date/city already exists.
   as "covered" for that time range. This matches what the coverage summary is meant to answer
   ("was a recording job actually running then"), not "how much clean data came back" — the
   latter is what `match`'s own reject-count output is for.
+- **No automated detection of a fully dead phone.** `family_a_phone_healthcheck.yml` used to poll
+  for this (deleted 2026-07-17 — its per-city local-time gate had a false-positive/timing problem
+  that made it unreliable in practice: it could fire "raw recording missing" for a city shortly
+  after that same city's build had already published successfully). Until a replacement exists,
+  the only signal that a day silently produced nothing is the *absence* of that city's usual
+  WhatsApp "realized GTFS ready" notification and Release — nothing alerts on that absence itself.
 
 ## Where the actual logic lives
 
