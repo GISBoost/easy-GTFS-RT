@@ -10,6 +10,15 @@ here does an additional read-only `actions/checkout` of `GISBoost/easy-OTP` and 
 `family_a` CLI from that checkout. The map-matching/interpolation logic itself is developed
 and documented entirely in `easy-OTP`; nothing is duplicated here.
 
+## Browsing the data
+
+[`GISBoost/gtfs-dashboard`](https://github.com/GISBoost/gtfs-dashboard) is a new, separate
+static site for easily browsing the Releases this repo produces
+(**[gisboost.github.io/gtfs-dashboard](https://gisboost.github.io/gtfs-dashboard/)**) — a
+city → month → day drill-down instead of scrolling the raw Releases list, which is no longer
+practical once you're past a handful of cities recording daily. It only reads this repo's public
+Releases API and `config/cities.json` on a schedule; nothing here needs to change to support it.
+
 ## Why this is a separate repo from `easy-OTP`
 
 - `easy-OTP`'s GitHub Releases are the plugin's own version history (`easy_otp-0.3.5.zip`
