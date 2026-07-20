@@ -504,6 +504,27 @@ jobs:
             --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
             --data-urlencode "text=${TEXT}"
 
+      - name: Notify gtfs-dashboard (repository_dispatch)
+        # Lets GISBoost/gtfs-dashboard's manifest refresh (GD-6) fire within seconds of a
+        # new release instead of waiting for its own scheduled poll, which is kept there
+        # as the fallback safety net (PRD.md 8.5 in that repo). continue-on-error: true
+        # is deliberate, same reasoning as the raw-release cleanup step above - a notify
+        # hiccup (expired PAT, transient API error, event_type typo on either side) must
+        # never fail this pipeline; the dashboard's own poll self-heals either way.
+        if: success() && steps.existing_release.outputs.exists != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GTFS_DASHBOARD_DISPATCH_TOKEN }}
+        run: |
+          set -uo pipefail
+          TAG="${CITY}-realized-${DATE}-phone"
+          gh api repos/GISBoost/gtfs-dashboard/dispatches \
+            -f event_type=gtfs-release-published \
+            -F "client_payload[city]=$CITY" \
+            -F "client_payload[date]=$DATE" \
+            -F "client_payload[tag]=$TAG" \
+            || echo "::warning::repository_dispatch to gtfs-dashboard failed - not fatal, its own scheduled poll (GD-2) is the fallback."
+
       - name: Notify WhatsApp (failure)
         if: failure()
         run: |
