@@ -20,7 +20,7 @@ przez GitHub Actions (chunki), zastąpiony przez telefon. `family_a_build_and_no
 o przywróceniu nagrywania przez Actions.
 
 ## Twarde ograniczenia
-- Zero zmian w `GISBoost/easy-OTP` — checkout tego repo w workflowach jest zawsze read-only.
+- Zero zmian w `GISBoost/easy-OTP`(jedyny wyjątek to folder scripts/termux. można edytować tylko i włącznie tam, ale musi być wyraźna zgoda Michała) — checkout tego repo w workflowach jest zawsze read-only.
 - Nie zgaduj URL-i/wartości konfiguracyjnych — pytaj, jeśli coś niepotwierdzone.
 - `family_a_build_and_notify_from_phone.yml`'s `repository_dispatch` `event_type`
   (`"phone-sweep-complete"`) musi się zgadzać dokładnie (case-sensitive) z tym, co wysyła
