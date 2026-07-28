@@ -14,6 +14,7 @@ and documented entirely in `easy-OTP`; nothing is duplicated here.
 
 **→ [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md) — how a realized GTFS is reconstructed, why the method is
 built the way it is, and what those design decisions do to the numbers you download.**
+**Po polsku: [`HOW-IT-WORKS.pl.md`](HOW-IT-WORKS.pl.md)** (same content, kept in sync).
 
 Start there if you have a realized GTFS or a diff chart in front of you and want to know how much
 to trust it. It walks the causal chain from a GPS ping to a rewritten timetable, gives the

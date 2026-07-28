@@ -1,5 +1,7 @@
 # How it works — the method behind these releases, and what it does to the data
 
+*[Wersja polska](HOW-IT-WORKS.pl.md)*
+
 Every day this pipeline publishes, per city, a **"realized" GTFS**: the city's official timetable
 with the arrival and departure times rewritten to reflect what vehicles actually did. This
 document explains how that is produced, why it is built the way it is, and — most importantly —
