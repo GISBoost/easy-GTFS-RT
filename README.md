@@ -10,6 +10,18 @@ here does an additional read-only `actions/checkout` of `GISBoost/easy-OTP` and 
 `family_a` CLI from that checkout. The map-matching/interpolation logic itself is developed
 and documented entirely in `easy-OTP`; nothing is duplicated here.
 
+## Understanding the data
+
+**→ [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md) — how a realized GTFS is reconstructed, why the method is
+built the way it is, and what those design decisions do to the numbers you download.**
+
+Start there if you have a realized GTFS or a diff chart in front of you and want to know how much
+to trust it. It walks the causal chain from a GPS ping to a rewritten timetable, gives the
+trade-off behind each design decision, explains how to read the published figures (including why a
+`0` delay is ambiguous and why "% of rows changed" is not a quality score), and lists the per-city
+defects currently known to affect the output. This README covers the *orchestration*; that
+document covers the *method and its consequences*.
+
 ## Browsing the data
 
 [`GISBoost/gtfs-dashboard`](https://github.com/GISBoost/gtfs-dashboard) is a new, separate
