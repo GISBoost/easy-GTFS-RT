@@ -30,7 +30,13 @@ static site for easily browsing the Releases this repo produces
 (**[gisboost.github.io/gtfs-dashboard](https://gisboost.github.io/gtfs-dashboard/)**) — a
 city → month → day drill-down instead of scrolling the raw Releases list, which is no longer
 practical once you're past a handful of cities recording daily. It only reads this repo's public
-Releases API and `config/cities.json` on a schedule; nothing here needs to change to support it.
+Releases API and `config/cities.json`, on its own daily schedule (08:00 UTC — late enough to have
+caught Boston's overnight build); nothing here needs to change to support it.
+
+Between 2026-07-20 and 2026-07-29 this repo also pushed a `repository_dispatch` to that one after
+each publish, so the dashboard updated within seconds instead of waiting for its cron. That step
+is gone: releases appear at most once per city per day, which made near-instant refresh not worth
+maintaining a cross-repo PAT for.
 
 ## Why this is a separate repo from `easy-OTP`
 
@@ -40,8 +46,8 @@ Releases API and `config/cities.json` on a schedule; nothing here needs to chang
 - This repo is **public**, which gets GitHub Actions unlimited minutes and artifact storage
   outside the default 500MB/repo cap that applies to private repos — meaningful for a job that
   records for up to 16 hours/day and produces a new GTFS build every evening.
-- Secrets here (`CALLMEBOT_*`) are scoped to this repo only and are never needed by, or exposed
-  to, `easy-OTP`.
+- Anything secret this pipeline ever needs is scoped to this repo only and is never needed by, or
+  exposed to, `easy-OTP`. (As of 2026-07-29 it needs none — see "Repository configuration".)
 
 ## Multi-city support (TX-8)
 
@@ -78,9 +84,13 @@ Phone (Termux, easy-OTP)                          This repo (easy-GTFS-RT)
                                                     (seconds later, per city) family_a_build_and
                                                     _notify_from_phone.yml downloads that city's
                                                     raw release, builds P50/P85 corrected GTFS,
-                                                    publishes "<city>-realized-<date>-phone",
-                                                    WhatsApp notify
+                                                    publishes "<city>-realized-<date>-phone"
 ```
+
+The workflow filenames still say `_notify_`, which is now historical — they no longer notify
+anything (see "Failure notification" below). Renaming them would break every existing bookmark,
+`workflow_dispatch` shortcut and cross-document reference for no functional gain, so they keep
+their names.
 
 - **`family_a_build_and_notify_from_phone.yml`** — builds and publishes the corrected GTFS, one
   city per matrix leg. Triggered by `repository_dispatch` (fired by the phone right after upload
@@ -112,23 +122,33 @@ matching-prefixed artifacts again. Full original design rationale, if ever neede
 
 ## Repository configuration
 
-Set under **Settings → Secrets and variables → Actions**, in this repo (not `easy-OTP`'s):
+**No repository secrets are required.** As of 2026-07-29 this repo's workflows use nothing beyond
+the automatic `GITHUB_TOKEN`.
 
 Since TX-8, per-city static GTFS URLs live in `config/cities.json` (this repo, versioned) instead
 of Settings variables — see "Multi-city support" above. Each city's `VEHICLE_POSITIONS_URL`
 equivalent lives entirely on the phone, in `~/easy-gtfs-rt-termux/cities/<city>.env` (`easy-OTP`'s
 `scripts/termux/README.md`), never in this repo's settings.
 
-**Secrets**
-| Name | Value |
-|---|---|
-| `CALLMEBOT_PHONE` | Your WhatsApp number, with country code (e.g. `+48...`) |
-| `CALLMEBOT_APIKEY` | Issued by CallMeBot after the one-time opt-in below |
+Three secrets used to live here and are now **unused and safe to delete** under
+**Settings → Secrets and variables → Actions** — nothing reads them any more:
 
-**CallMeBot one-time opt-in** (per phone number, done once):
-1. Add the CallMeBot contact in WhatsApp: `+34 644 51 71 92`.
-2. Send it the message: `I allow callmebot to send me messages`.
-3. It replies with your `apikey` — put that in the `CALLMEBOT_APIKEY` secret above.
+| Removed secret | What it was for |
+|---|---|
+| `CALLMEBOT_PHONE` | WhatsApp notification target (removed with the notify steps) |
+| `CALLMEBOT_APIKEY` | CallMeBot API key for the same |
+| `GTFS_DASHBOARD_DISPATCH_TOKEN` | Cross-repo PAT to `repository_dispatch` the dashboard refresh |
+
+The phone still authenticates to *this* repo with its own token to upload raw recordings and fire
+its `repository_dispatch`; that lives on the phone, not in these settings, and is unaffected.
+
+### Failure notification
+
+There is none of our own, deliberately. GitHub already emails the repository owner when a
+scheduled or dispatched workflow run fails, which is the same signal the WhatsApp "build FAILED"
+message carried — so that message was pure duplication, and it depended on a free third-party API
+with a request quota that eventually ran out. Watch the Actions tab, or GitHub's own notification
+settings, instead.
 
 ## Manual testing
 
@@ -144,10 +164,12 @@ for that date/city already exists.
 
 ## Known, accepted trade-offs
 
-- **CallMeBot is an unofficial, volunteer-run API** (no SLA/guarantee). If it's down, the
-  WhatsApp notification silently fails to send — but the GitHub Release is still published
-  either way. The Release is the source of truth; WhatsApp is a convenience notification on
-  top of it, not the delivery mechanism itself.
+- **Success is not announced anywhere.** Until 2026-07-29 a WhatsApp message went out per
+  published release, via CallMeBot — an unofficial, volunteer-run API with a request quota, which
+  ran out. It was removed rather than replaced: the Release itself was always the source of
+  truth and the message only ever restated it, while failures are already covered by GitHub's own
+  emails. The cost is that noticing a *silently missing* day is now entirely manual (see the last
+  bullet below).
 - **The static GTFS is downloaded fresh every build**, never cached long-term — an open data
   feed has been observed (Łódź) to republish with a shifted `trip_id` generation between
   recording sessions, and reusing a stale static feed against newer recordings silently
@@ -167,7 +189,10 @@ for that date/city already exists.
   that made it unreliable in practice: it could fire "raw recording missing" for a city shortly
   after that same city's build had already published successfully). Until a replacement exists,
   the only signal that a day silently produced nothing is the *absence* of that city's usual
-  WhatsApp "realized GTFS ready" notification and Release — nothing alerts on that absence itself.
+  Release — nothing alerts on that absence itself. Note this got weaker on 2026-07-29: a missing
+  WhatsApp message used to be a passive cue that arrived by itself, whereas a missing Release has
+  to be looked for. GitHub's failure emails do not cover this case, because a phone that never
+  uploads never triggers a run that can fail.
 
 ## Data and attribution
 
