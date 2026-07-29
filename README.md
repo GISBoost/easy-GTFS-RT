@@ -169,6 +169,49 @@ for that date/city already exists.
   the only signal that a day silently produced nothing is the *absence* of that city's usual
   WhatsApp "realized GTFS ready" notification and Release — nothing alerts on that absence itself.
 
+## Data and attribution
+
+**The licence on this repository covers this repository's own contents — not the data in its
+Releases.** That distinction matters here more than it does in most repos, because every Release
+contains material this project does not own:
+
+- **The archived static GTFS** (`<city>_static_gtfs_<date>.zip`) is a *verbatim copy* of the
+  transit agency's own feed, redistributed unchanged. Its terms are entirely the agency's.
+- **The realized GTFS** (`<city>-realized-<date>-*`) is a *derivative* of that feed — it reuses the
+  agency's `stop_id`s, `route_id`s, `trip_id`s, shapes and stop coordinates, and rewrites only the
+  times. Most open-data licences carry attribution, and some carry share-alike, obligations
+  through into derivatives like this one.
+- **The recorded positions** (`positions-raw-<city>-<date>`) come from each agency's public
+  GTFS-RT `VehiclePositions` endpoint.
+
+The authoritative list of sources is [`config/cities.json`](config/cities.json) — each entry's
+`static_gtfs_url` points at the operator or open-data portal the feed came from. **Check the terms
+at that source before redistributing or publishing anything derived from a Release.** They are not
+uniform: the 13 cities currently recorded span nine countries and a correspondingly wide range of
+open-data regimes, from explicit Creative Commons grants to bespoke portal terms of use. This
+project cannot and does not relicense any of it.
+
+If you use this data in published work, attribute both the originating agency (per its own terms)
+and, if the reconstruction itself is relevant to your result, this project — the delay figures are
+*inferred*, not measured, and [`HOW-IT-WORKS.md`](HOW-IT-WORKS.md) explains what that costs.
+
+## Licensing
+
+| What | Licence |
+|---|---|
+| Code in this repo (workflows, `config/cities.json`, `README.md`) | MIT — [`LICENSE`](LICENSE) |
+| `HOW-IT-WORKS.md` / `HOW-IT-WORKS.pl.md` | CC BY 4.0 — [`LICENSE-docs`](LICENSE-docs) |
+| Data in the GitHub Releases | Not ours to license — see "Data and attribution" above |
+
+The workflows here are MIT precisely so they are easy to copy: pointing this pipeline at a new
+city is a `config/cities.json` entry and a phone-side config, and nothing in this repo should
+stand in the way of someone doing that for their own city.
+
+`easy-OTP`, which holds the actual reconstruction logic these workflows invoke, is
+**GPL-3.0-or-later** (a QGIS plugin repository requirement). There is no conflict: these workflows
+`checkout` and run its CLI as a separate process, which is use, not derivation — but note that a
+copy of the *`family_a` code itself* stays GPL wherever it goes.
+
 ## Where the actual logic lives
 
 This repo only orchestrates. The `family_a` CLI (`record` / `match` / `build`), its algorithm,

@@ -1,0 +1,63 @@
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+Copyright (c) 2026 Michal Kaczorowski
+
+
+WHAT THIS COVERS
+
+This licence applies to the long-form documentation in this repository:
+
+    HOW-IT-WORKS.md
+    HOW-IT-WORKS.pl.md
+
+It does NOT apply to:
+
+  - The code in this repository (GitHub Actions workflows, config/cities.json,
+    README.md). That is MIT-licensed -- see LICENSE.
+  - The data published in this repository's GitHub Releases. That is governed by
+    the terms of each transit agency's own open-data feed, not by this licence.
+    See the "Data and attribution" section of README.md.
+
+The documentation is licensed separately from the code because it is the part
+most likely to be quoted, translated, or cited in academic work, where CC BY is
+the expected licence and MIT is an awkward fit for prose.
+
+
+THE GRANT
+
+You are free to:
+
+  Share  -- copy and redistribute the material in any medium or format
+  Adapt  -- remix, transform, and build upon the material
+
+for any purpose, including commercially, under the following term:
+
+  Attribution -- You must give appropriate credit, provide a link to the
+  licence, and indicate if changes were made. You may do so in any reasonable
+  manner, but not in any way that suggests the licensor endorses you or your
+  use.
+
+No additional restrictions -- you may not apply legal terms or technological
+measures that legally restrict others from doing anything the licence permits.
+
+The full legal text is canonical and available at:
+
+    https://creativecommons.org/licenses/by/4.0/legalcode
+
+A plain-language summary is at:
+
+    https://creativecommons.org/licenses/by/4.0/
+
+SPDX-License-Identifier: CC-BY-4.0
+
+
+SUGGESTED ATTRIBUTION
+
+  "How a realized GTFS is reconstructed" by Michal Kaczorowski,
+  https://github.com/GISBoost/easy-GTFS-RT, licensed under CC BY 4.0.
+
+If you cite the underlying method rather than this write-up of it, cite the
+method's source instead: Wessel, Allen & Farber (2017), "Constructing a Routable
+Retrospective Transit Timetable from a Real-time Vehicle Location Feed and
+GTFS". This documentation describes one implementation of that method, not the
+method itself.

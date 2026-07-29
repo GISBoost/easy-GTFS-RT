@@ -339,3 +339,10 @@ print per-route diagnostics and warn when a run looks unhealthy (a route with ob
 usable ones, an implausible rejection rate, or a matched table paired with the wrong static feed).
 
 Browse the releases at **[gisboost.github.io/gtfs-dashboard](https://gisboost.github.io/gtfs-dashboard/)**.
+
+---
+
+*This document is licensed under [CC BY 4.0](LICENSE-docs) — quote it, translate it, build on it,
+with credit. The code in this repository is [MIT](LICENSE). The data described here is covered by
+neither: it derives from each transit agency's own feed, under that agency's terms — see
+[Data and attribution](README.md#data-and-attribution).*

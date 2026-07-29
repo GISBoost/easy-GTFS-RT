@@ -344,3 +344,10 @@ ani jednej użytecznej; nieprawdopodobny poziom odrzuceń; tabela dopasowań spa
 feedem statycznym).
 
 Release'y przeglądasz na **[gisboost.github.io/gtfs-dashboard](https://gisboost.github.io/gtfs-dashboard/)**.
+
+---
+
+*Ten dokument jest na licencji [CC BY 4.0](LICENSE-docs) — cytuj, tłumacz, buduj na nim, z podaniem
+autorstwa. Kod w tym repozytorium jest na [MIT](LICENSE). Dane, które dokument opisuje, nie są objęte
+ani jednym, ani drugim: pochodzą z feedów poszczególnych przewoźników i podlegają ich warunkom —
+zob. [Data and attribution](README.md#data-and-attribution).*
