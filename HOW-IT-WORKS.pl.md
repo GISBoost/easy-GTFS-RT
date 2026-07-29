@@ -48,15 +48,41 @@ zaraportowane:
 - „brak korekty" i „jechał dokładnie punktualnie" wyglądają w pliku wynikowym identycznie. Tej
   dwuznaczności nie da się usunąć przy takim wejściu — §4 tłumaczy, jak sobie z nią radzić.
 
-Metoda jest tą opisaną w Wessel, Allen & Farber (2017), *„Constructing a Routable Retrospective
-Transit Timetable from a Real-time Vehicle Location Feed and GTFS"* — dopasowanie pozycji do mapy
-plus interpolacja — przystosowaną do działania bez zewnętrznego silnika routingu.
+Nic w tej metodzie nie zostało tu wymyślone. Składa się ona z trzech opublikowanych źródeł, z
+których każde dokłada inne ogniwo poniższego łańcucha:
+
+- **Wessel, Allen & Farber (2017)**, *„Constructing a Routable Retrospective Transit Timetable
+  from a Real-time Vehicle Location Feed and GTFS"*, *Journal of Transport Geography* 62, 92–97
+  ([`retro-gtfs`](https://github.com/SAUSy-Lab/retro-gtfs)) — pierwotne podejście oparte na
+  pozycjach i kształt kroków 1–4: wydzielić kursy ze strumienia pozycji, dopasować je do trasy,
+  odczytać czasy minięcia przystanków z otaczających raportów pojazdu przez interpolację liniową.
+  Oni dopasowują do prawdziwej sieci drogowej przez OSRM; ten pipeline rzutuje zamiast tego na
+  polilinię kształtu z GTFS — to największe uproszczenie, jakie tu zrobiono, omówione w §3.
+- **Braga, Loureiro & Pereira (2023)**, *„Evaluating the impact of public transport travel time
+  inaccuracy and variability on socio-spatial inequalities in accessibility"*, *Journal of
+  Transport Geography* 109, 103590 — kroki 5 i 6, praktycznie w całości: zebrać zaobserwowane
+  czasy przejazdu per para sąsiednich przystanków per przedział pory dnia, wziąć z każdego
+  rozkładu medianę (P50) i 85. percentyl (P85), a następnie odbudować rozkład jazdy, przyjmując
+  za stały pierwszy planowy odjazd każdego kursu i akumulując od niego zaobserwowane czasy
+  segmentów. Feed P85 istnieje z podanego przez nich powodu — to mniej więcej jedno odchylenie
+  standardowe powyżej średniej, więc reprezentuje dzień zły, ale nie wyjątkowy, a nie przeciętny.
+- **Chen & Botta (2026)**, *„rt2gtfs: A scalable framework for correcting public transport
+  timetables using real-time data for accessibility analysis"*, arXiv:2603.11477
+  ([`rt2gtfs`](https://github.com/kevinwinsper/rt2gtfs)) — tania kontrola uporządkowania używana w
+  krokach 2 i 3: odrzuć każdą kotwicę, która umieściłaby wcześniejszy przystanek w czasie
+  późniejszym niż przystanek następny, zamiast płacić za probabilistyczny map-matcher, który by
+  temu zapobiegł. To dzięki temu pipeline oparty wyłącznie na polilinii da się w ogóle utrzymać.
+
+Jedyne istotne odejście od wszystkich trzech to skala materiału dowodowego. Braga i in. zbierają
+**20 dni** zapisów GPS, zanim policzą percentyl; ten pipeline publikuje feed **na każdy dzień**,
+więc każdy rozkład stojący za tutejszym P50 czy P85 powstaje z obserwacji jednego dnia. §3 i §4
+mówią, ile to kosztuje.
 
 ---
 
 ## 2. Łańcuch, krok po kroku
 
-Pięć kroków zamienia pingi GPS w przepisany rozkład. Każdy musi *rozstrzygnąć* coś, czego surowe
+Sześć kroków zamienia pingi GPS w przepisany rozkład. Każdy musi *rozstrzygnąć* coś, czego surowe
 dane nie mówią wprost, i każde rozstrzygnięcie ma swoją cenę.
 
 ```
@@ -173,9 +199,15 @@ raz. Odpytywanie co minutę zagęszcza pingi *wewnątrz* kursu; nie tworzy kolej
 Liczebność próby dla klucza zależy więc od tego, **jak często dana linia faktycznie jeździ w tym
 2-godzinnym oknie** — autobus co godzinę wniesie najwyżej ~2 obserwacje, choćby nagranie było
 idealne. Zmierzone: średnio **1,8–6,2 obserwacji na klucz**, a w Poznaniu i Pradze **28–47% kluczy
-opiera się na jednej jedynej obserwacji**. Dla nich raportowana mediana *jest* tym jednym odczytem.
+opiera się na jednej jedynej obserwacji**.
 
-Każdy klucz jest następnie sprowadzany do **P50** (mediana — przypadek typowy) i **P85** (85.
+Klucze z mniej niż dwiema obserwacjami są następnie **odrzucane**, zanim policzy się jakąkolwiek
+statystykę — te 28–47% to więc nie są cienkie dane w wyniku, tylko dane, które do wyniku w ogóle
+nie docierają. Te pary przystanków zachowują czasy rozkładowe i stają się nieodróżnialne od par,
+na których nigdy żadnego pojazdu nie zaobserwowano. To pojedynczo największy powód, dla którego
+miasto może być nagrywane cały dzień i pokazać niewiele korekty.
+
+Każdy ocalały klucz jest sprowadzany do **P50** (mediana — przypadek typowy) i **P85** (85.
 percentyl — przypadek pesymistyczny). Publikowane są dwa pliki dziennie dokładnie z tego powodu:
 P50 odpowiada na „ile to zwykle trwa", P85 na „ile czasu powinienem zarezerwować".
 
@@ -219,12 +251,12 @@ Każda z nich to świadomy kompromis. Prawa kolumna mówi, co to znaczy dla Cieb
 | Decyzja | Dlaczego tak | Co to kosztuje w danych |
 |---|---|---|
 | Odpytywanie co 60 s | Kompromis między uprzejmością wobec feedu a precyzją; przewoźnicy limitują ruch | Czasy przejazdu są interpolowane, nigdy obserwowane wprost |
-| Jeden dzień nagrania na build | Telefon nagrywa jedną ciągłą sesję na miasto na dobę | Cienkie próby na klucz segmentu (§2.5). Łączenie kilku dni jest możliwe, ale nie jest domyślne |
+| Jeden dzień nagrania na build | Telefon nagrywa jedną ciągłą sesję na miasto na dobę | Cienkie próby na klucz segmentu (§2.5) — Braga i in. zbierają **20 dni**, zanim policzą percentyl. Łączenie kilku dni jest tu możliwe, ale nie jest domyślne |
 | Statyczny GTFS pobierany świeżo przy każdym buildzie i archiwizowany z release'em | Feedy są republikowane z przenumerowanymi `trip_id`; przestarzała statyka po cichu nie pasuje do niczego | Jeśli przewoźnik opublikuje feed *następnego* okresu z wyprzedzeniem, ten dzień degraduje się — patrz §5 |
-| Klucz segmentu z day_type i kubełkiem 2-godzinnym | Powstrzymuje jedno popołudnie przed „skorygowaniem" całego feedu | 12 kubełków/dobę × 3 typy dni rozdrabnia próbę; większa rozdzielczość to mniej obserwacji na klucz |
-| Minimum 2 obserwacje na segment | Pojedynczy odczyt to nie dowód | Segmenty widziane raz są odrzucane i zachowują rozkład — stają się nieodróżnialne od nieobserwowanych |
+| Klucz segmentu z day_type i kubełkiem 2-godzinnym | Powstrzymuje jedno popołudnie przed „skorygowaniem" całego feedu | 12 kubełków/dobę × 3 typy dni rozdrabnia próbę; większa rozdzielczość to mniej obserwacji na klucz. Braga i in. używają przedziałów **15-minutowych** — na co stać tylko przy 20 dniach danych, nie przy jednym |
+| Minimum 2 obserwacje na segment | Pojedynczy odczyt to nie dowód | Segmenty widziane raz są odrzucane i zachowują rozkład — stają się nieodróżnialne od nieobserwowanych. Braga i in. wymagają **10**, a poniżej tego wracają do rozkładu; 2 to tyle, ile udźwignie jeden dzień nagrania |
 | Luka = zachowaj rozkładowy czas | Jedyny uczciwy fallback; wymyślanie liczby byłoby gorsze | **Opóźnienie dokładnie 0 jest dwuznaczne**: albo naprawdę punktualnie, albo nigdy nie zaobserwowano |
-| Odrzucanie prędkości powyżej 100 km/h | Łapie artefakty interpolacji; 100 km/h jest hojne jak na miejską prędkość komunikacyjną | Legalnie szybkie połączenia też są odrzucane. W Pradze usuwa to **2187 z 123 833 kluczy**, prawie wyłącznie kolej regionalną |
+| Odrzucanie prędkości powyżej 100 km/h | Łapie artefakty interpolacji. Wessel i in. użyli 120 km/h, ale dla prędkości punkt-punkt z GPS; średnia przystanek-przystanek już absorbuje ruch uliczny, więc próg jest tu ostrzejszy | Legalnie szybkie połączenia też są odrzucane. W Pradze usuwa to **2187 z 123 833 kluczy**, prawie wyłącznie kolej regionalną |
 | Odrzucanie par nawiasujących odległych o ponad 300 s | Taka para mierzy rzadkość nagrywania, nie prędkość | Naprawdę wolne, rzadko śledzone segmenty tracą dane razem ze złymi |
 | Korekta stosuje się do każdego kursu dzielącego klucz segmentu | Jedna obserwacja na klucz to często wszystko, co jest; bez dzielenia prawie nic by się nie skorygowało | Jedna błędna obserwacja propaguje się na wszystkie kursy tej trasy/kierunku/pary/kubełka |
 | P50 i P85 publikowane osobno | Mediana ukrywa ryzyko ogona; 85. percentyl to liczba do planowania | Żadna nie jest „tą właściwą"; wybierasz zależnie od zastosowania |
@@ -280,8 +312,10 @@ faktycznej punktualności.
 ### P50 a P85
 
 P50 to mediana zaobserwowanego czasu segmentu; P85 to 85. percentyl, przycięty tak, by nigdy nie
-był poniżej P50. Dla klucza z jedną obserwacją obie są równe tej obserwacji — plik P85 **nie**
-reprezentuje wtedy dodatkowych dowodów.
+był poniżej P50. Przy zaledwie dwóch czy trzech obserwacjach na klucz — czyli w przypadku
+typowym, zob. §2.5 — „85. percentyl" jest interpolacją między dwoma czy trzema odczytami, a nie
+oszacowaniem ogona rozkładu. Nadal jest z tych dwóch liczb ostrożniejszy, ale przy takiej
+liczebności próby nie czytaj go jako twierdzenia o rozkładzie.
 
 ---
 

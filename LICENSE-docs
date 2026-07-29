@@ -56,8 +56,24 @@ SUGGESTED ATTRIBUTION
   "How a realized GTFS is reconstructed" by Michal Kaczorowski,
   https://github.com/GISBoost/easy-GTFS-RT, licensed under CC BY 4.0.
 
-If you cite the underlying method rather than this write-up of it, cite the
-method's source instead: Wessel, Allen & Farber (2017), "Constructing a Routable
-Retrospective Transit Timetable from a Real-time Vehicle Location Feed and
-GTFS". This documentation describes one implementation of that method, not the
-method itself.
+That attribution covers this write-up only. The documentation describes one
+implementation of a published method, not the method itself -- if what you are
+citing is the method, cite its sources, all three of which this pipeline draws
+on directly:
+
+  Wessel, N., Allen, J., & Farber, S. (2017). Constructing a routable
+  retrospective transit timetable from a real-time vehicle location feed and
+  GTFS. Journal of Transport Geography, 62, 92-97.
+  https://doi.org/10.1016/j.jtrangeo.2017.04.012
+  -- the position-based reconstruction approach itself.
+
+  Braga, C. K. V., Loureiro, C. F. G., & Pereira, R. H. M. (2023). Evaluating
+  the impact of public transport travel time inaccuracy and variability on
+  socio-spatial inequalities in accessibility. Journal of Transport Geography,
+  109, 103590. https://doi.org/10.1016/j.jtrangeo.2023.103590
+  -- per-segment, per-time-interval aggregation and the P50/P85 feed pair.
+
+  Chen, Z., & Botta, F. (2026). rt2gtfs: A scalable framework for correcting
+  public transport timetables using real-time data for accessibility analysis.
+  arXiv:2603.11477. https://arxiv.org/abs/2603.11477
+  -- the ordering-consistency check applied before interpolation.

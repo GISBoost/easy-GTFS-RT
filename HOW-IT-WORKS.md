@@ -47,15 +47,41 @@ That one fact is the root of everything below. Because the delay is inferred rat
 - "no correction" and "ran exactly on time" end up looking identical in the output file. This
   ambiguity is unavoidable given the input, and §4 explains how to work around it.
 
-The method is the one described in Wessel, Allen & Farber (2017), *"Constructing a Routable
-Retrospective Transit Timetable from a Real-time Vehicle Location Feed and GTFS"* — position-based
-map-matching plus interpolation — adapted to run without an external routing engine.
+None of the method is invented here. It combines three published sources, each supplying a
+different link in the chain below:
+
+- **Wessel, Allen & Farber (2017)**, *"Constructing a Routable Retrospective Transit Timetable
+  from a Real-time Vehicle Location Feed and GTFS"*, *Journal of Transport Geography* 62, 92–97
+  ([`retro-gtfs`](https://github.com/SAUSy-Lab/retro-gtfs)) — the original position-based
+  approach, and the shape of steps 1–4: delimit trips from a location feed, match them to a route,
+  read stop crossing times off the surrounding vehicle reports by linear interpolation. They match
+  to the real street network through OSRM; this pipeline projects onto the GTFS shape polyline
+  instead, which is the single biggest simplification made here and is discussed in §3.
+- **Braga, Loureiro & Pereira (2023)**, *"Evaluating the impact of public transport travel time
+  inaccuracy and variability on socio-spatial inequalities in accessibility"*, *Journal of
+  Transport Geography* 109, 103590 — steps 5 and 6, essentially in full: pool observed travel
+  times per pair of consecutive stops per time-of-day interval, take a median (P50) and an 85th
+  percentile (P85) from each distribution, and rebuild the timetable by holding every trip's
+  scheduled first departure fixed and accumulating observed segment times from there. The P85 feed
+  exists for the reason they give — roughly one standard deviation above the mean, so it stands in
+  for a bad-but-not-exceptional day rather than an average one.
+- **Chen & Botta (2026)**, *"rt2gtfs: A scalable framework for correcting public transport
+  timetables using real-time data for accessibility analysis"*, arXiv:2603.11477
+  ([`rt2gtfs`](https://github.com/kevinwinsper/rt2gtfs)) — the cheap ordering guard used in steps
+  2 and 3: discard any anchor that would put an earlier stop at a later time than a later one,
+  rather than paying for a probabilistic map-matcher to prevent it. This is what makes a
+  polyline-only pipeline survivable.
+
+The one substantive departure from all three is scale of evidence. Braga et al. pool **20 days**
+of GPS records before taking a percentile; this pipeline publishes a feed **per day**, so every
+distribution behind a P50 or P85 here is built from a single day's observations. §3 and §4 say
+what that costs.
 
 ---
 
 ## 2. The chain, step by step
 
-Five steps turn GPS pings into a rewritten timetable. Each one has to *decide* something the raw
+Six steps turn GPS pings into a rewritten timetable. Each one has to *decide* something the raw
 data does not state outright, and each decision has a price.
 
 ```
@@ -170,12 +196,17 @@ Minute-level polling densifies the pings *within* a trip; it does not create mor
 So a key's sample size is governed by **how often that route actually runs inside that 2-hour
 window** — an hourly bus can contribute at most ~2 observations no matter how good the recording
 is. Measured across cities, the mean is **1.8–6.2 observations per key**, and in Poznań and
-Prague **28–47% of keys rest on a single observation**. For those, the reported median *is* that
-one reading.
+Prague **28–47% of keys rest on a single observation**.
 
-Each key is then reduced to a **P50** (median — the typical case) and a **P85** (85th percentile —
-the pessimistic case). Two files are published per day for exactly this reason: P50 answers "how
-long does this usually take", P85 answers "how long should I allow".
+Keys with fewer than two observations are then **discarded** before any statistic is computed, so
+that 28–47% is not thin data in the output — it is data that never reaches the output at all.
+Those stop pairs keep their scheduled times and become indistinguishable from stop pairs no
+vehicle was ever seen on. This is the single largest reason a city can be recorded all day and
+still show little correction.
+
+Each surviving key is reduced to a **P50** (median — the typical case) and a **P85** (85th
+percentile — the pessimistic case). Two files are published per day for exactly this reason: P50
+answers "how long does this usually take", P85 answers "how long should I allow".
 
 ### 2.6 Rebuild — write the corrected timetable
 
@@ -216,12 +247,12 @@ Every one of these is a deliberate trade-off. The right-hand column is what it m
 | Decision | Why it is this way | What it costs in the data |
 |---|---|---|
 | Poll every 60 s | Balances feed politeness against precision; agencies rate-limit | Crossing times are interpolated, never observed directly |
-| One recording day per build | The phone records one continuous session per city per day | Thin samples per segment key (§2.5). Pooling several days is possible but not currently the default |
+| One recording day per build | The phone records one continuous session per city per day | Thin samples per segment key (§2.5) — Braga et al. pool **20 days** before taking a percentile. Pooling several days is possible here but is not currently the default |
 | Static GTFS downloaded fresh each build, and archived with the release | Feeds republish with renumbered `trip_id`s; a stale static silently matches nothing | If the agency publishes the *next* period's feed early, that day's build degrades — see §5 |
-| Segment keyed by day_type + 2-hour bucket | Stops a single afternoon from "correcting" a whole feed | 12 buckets/day × 3 day types fragments the sample; more resolution means fewer observations per key |
-| Minimum 2 observations per segment | A single reading is not evidence | Segments seen once are dropped entirely and keep scheduled times — they become indistinguishable from unobserved ones |
+| Segment keyed by day_type + 2-hour bucket | Stops a single afternoon from "correcting" a whole feed | 12 buckets/day × 3 day types fragments the sample; more resolution means fewer observations per key. Braga et al. use **15-minute** intervals — affordable only on 20 days of data, not one |
+| Minimum 2 observations per segment | A single reading is not evidence | Segments seen once are dropped entirely and keep scheduled times — indistinguishable from unobserved ones. Braga et al. require **10**, falling back to the schedule below that; 2 is what a single recording day can support |
 | Gap = keep the scheduled time | The only honest fallback; inventing a number would be worse | **A delay of exactly 0 is ambiguous**: either genuinely on time, or never observed |
-| Reject implied speeds over 100 km/h | Catches interpolation artifacts; 100 km/h is generous for urban operating speed | Legitimately fast services are rejected too. In Prague this removes **2,187 of 123,833 keys**, almost all regional rail |
+| Reject implied speeds over 100 km/h | Catches interpolation artifacts. Wessel et al. used 120 km/h, but on point-to-point GPS speeds; a stop-to-stop average already absorbs traffic, so the bound is tighter here | Legitimately fast services are rejected too. In Prague this removes **2,187 of 123,833 keys**, almost all regional rail |
 | Reject bracketing pairs more than 300 s apart | Such a pair measures recording sparsity, not speed | Genuinely slow, sparsely-tracked segments lose data along with the bad ones |
 | Correction applies to every trip sharing a segment key | One observation per key is often all there is; without sharing, almost nothing would be corrected | One wrong observation propagates to every trip on that route/direction/stop-pair/bucket |
 | P50 and P85 published separately | Median hides tail risk; the 85th percentile is the planning number | Neither is "the" answer; pick per use case |
@@ -276,8 +307,10 @@ actual punctuality.
 ### P50 vs P85
 
 P50 is the median observed segment time; P85 is the 85th percentile, clamped so it is never below
-P50. For a key with a single observation both equal that observation — the P85 file does *not*
-represent extra evidence in that case.
+P50. With only two or three observations behind a key — the common case, see §2.5 — the "85th
+percentile" is an interpolation between two or three readings, not a tail estimate. It is still
+the more conservative of the two numbers, but do not read it as a distributional claim at that
+sample size.
 
 ---
 
