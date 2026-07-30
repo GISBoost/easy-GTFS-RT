@@ -30,8 +30,8 @@ static site for easily browsing the Releases this repo produces
 (**[gisboost.github.io/gtfs-dashboard](https://gisboost.github.io/gtfs-dashboard/)**) — a
 city → month → day drill-down instead of scrolling the raw Releases list, which is no longer
 practical once you're past a handful of cities recording daily. It only reads this repo's public
-Releases API and `config/cities.json`, on its own daily schedule (08:00 UTC — late enough to have
-caught Boston's overnight build); nothing here needs to change to support it.
+Releases API and `config/cities.json`, on its own daily schedule (04:00 UTC — late enough to have
+caught Boston, which publishes at 02:21–02:26 UTC); nothing here needs to change to support it.
 
 Between 2026-07-20 and 2026-07-29 this repo also pushed a `repository_dispatch` to that one after
 each publish, so the dashboard updated within seconds instead of waiting for its cron. That step
