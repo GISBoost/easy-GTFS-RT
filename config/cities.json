@@ -57,5 +57,26 @@
   "gdansk": {
     "display_name": "Gdańsk",
     "static_gtfs_url": "https://ckan.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/30e783e4-2bec-4a7d-bb22-ee3e3b26ca96/download/gtfsgoogle.zip"
+  },
+  "warszawa": {
+    "display_name": "Warszawa",
+    "static_gtfs_url": "https://mkuran.pl/gtfs/warsaw.zip"
+  },
+  "krakow": {
+    "display_name": "Kraków",
+    "static_gtfs_url": "https://gtfs.ztp.krakow.pl/GTFS_KRK.zip"
+  },
+  "rzeszow": {
+    "display_name": "Rzeszów",
+    "static_gtfs_url": "https://www.mpkrzeszow.pl/gtfs/latest.zip"
+  },
+  "kielce": {
+    "display_name": "Kielce",
+    "static_gtfs_url": "https://ztm.kielce.pl/GTFS/GTFS.zip"
+  },
+  "helsinki": {
+    "display_name": "Helsinki",
+    "static_gtfs_url": "http://dev.hsl.fi/gtfs/hsl.zip",
+    "timezone": "Europe/Helsinki"
   }
 }
