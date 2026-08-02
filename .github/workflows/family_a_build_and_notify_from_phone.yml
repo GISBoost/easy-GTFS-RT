@@ -162,9 +162,17 @@ jobs:
         run: |
           set -euo pipefail
           DISPLAY_NAME="$(jq -r --arg c "$CITY" '.[$c].display_name' config/cities.json)"
-          STATIC_URL="$(jq -r --arg c "$CITY" '.[$c].static_gtfs_url' config/cities.json)"
+          STATIC_URL="$(jq -r --arg c "$CITY" '.[$c].static_gtfs_url // empty' config/cities.json)"
           echo "display_name=$DISPLAY_NAME" >> "$GITHUB_OUTPUT"
           echo "static_gtfs_url=$STATIC_URL" >> "$GITHUB_OUTPUT"
+
+          # Present only for cities whose GTFS has no single stable URL (e.g. GZM: ZTM
+          # republishes ~11 ZIP resources daily under one CKAN dataset, each covering a
+          # DIFFERENT date sub-range of a rolling ~3-week window, not split by operator -
+          # verified 2026-08-02, see the Download fresh static GTFS step for the resolver).
+          # Empty for every other city, which keeps using static_gtfs_url directly.
+          CKAN_PACKAGE_ID="$(jq -r --arg c "$CITY" '.[$c].static_gtfs_ckan_package_id // empty' config/cities.json)"
+          echo "static_gtfs_ckan_package_id=$CKAN_PACKAGE_ID" >> "$GITHUB_OUTPUT"
 
           # Optional per-city route_ids to drop before matching (space-separated, safe here -
           # route_id values in this repo's cities.json are always plain alphanumeric strings, no
@@ -211,7 +219,59 @@ jobs:
 
       - name: Download fresh static GTFS
         if: steps.existing_release.outputs.exists != 'true'
-        run: curl -fsSL -o static_gtfs.zip "${{ steps.city.outputs.static_gtfs_url }}"
+        run: |
+          set -euo pipefail
+          CKAN_PACKAGE_ID="${{ steps.city.outputs.static_gtfs_ckan_package_id }}"
+
+          if [ -z "$CKAN_PACKAGE_ID" ]; then
+            curl -fsSL -o static_gtfs.zip "${{ steps.city.outputs.static_gtfs_url }}"
+            exit 0
+          fi
+
+          # CKAN-resolved static GTFS (currently: GZM only). The dataset has no single
+          # stable download URL - resolve today's file by checking each candidate ZIP's own
+          # feed_info.txt date range, rather than assuming file order/count stays stable.
+          DATE_COMPACT="${DATE//-/}"
+          echo "Resolving static GTFS for $DATE_COMPACT via CKAN package $CKAN_PACKAGE_ID..."
+          RESOURCES_JSON="$(curl -fsSL "https://otwartedane.metropoliagzm.pl/api/3/action/package_show?id=${CKAN_PACKAGE_ID}")"
+
+          # Candidates sorted by the numeric sequence embedded in the filename
+          # (schedule_ZTM_<generated-date>_<seq>_<time>.zip) - ascending, since the lowest
+          # sequence number has so far always been the resource covering "today" (verified
+          # 2026-08-02). Trying candidates in this order makes the common case a single
+          # download; checking feed_info.txt below (not just trusting this order) keeps it
+          # correct even if that assumption ever breaks.
+          mapfile -t CANDIDATE_URLS < <(echo "$RESOURCES_JSON" | jq -r '
+            .result.resources
+            | map(select(.format == "ZIP"))
+            | map({url: .url, seq: (.name | capture("_(?<seq>[0-9]+)_[0-9]+\\.zip$").seq)})
+            | sort_by(.seq | tonumber)
+            | .[].url
+          ')
+
+          if [ "${#CANDIDATE_URLS[@]}" -eq 0 ]; then
+            echo "::error::No ZIP resources found in CKAN package ${CKAN_PACKAGE_ID}"
+            exit 1
+          fi
+
+          FOUND=""
+          for URL in "${CANDIDATE_URLS[@]}"; do
+            curl -fsSL -o candidate_gtfs.zip "$URL"
+            unzip -p candidate_gtfs.zip feed_info.txt > feed_info.csv
+            COVERS="$(python3 -c "import csv; row = next(csv.DictReader(open('feed_info.csv', newline=''))); print('yes' if row['feed_start_date'] <= '$DATE_COMPACT' <= row['feed_end_date'] else 'no')")"
+            if [ "$COVERS" = "yes" ]; then
+              mv candidate_gtfs.zip static_gtfs.zip
+              echo "Using $URL for $DATE_COMPACT"
+              FOUND="1"
+              break
+            fi
+            rm -f candidate_gtfs.zip feed_info.csv
+          done
+
+          if [ -z "$FOUND" ]; then
+            echo "::error::No CKAN resource in package ${CKAN_PACKAGE_ID} covers ${DATE_COMPACT}"
+            exit 1
+          fi
 
       - name: Download today's raw recordings from the phone's release
         id: collect

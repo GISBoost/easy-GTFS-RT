@@ -106,5 +106,9 @@
   "suwalki": {
     "display_name": "Suwałki",
     "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/suwalki.zip"
+  },
+  "gzm": {
+    "display_name": "GZM (Górnośląsko-Zagłębiowska Metropolia)",
+    "static_gtfs_ckan_package_id": "317435cc-0075-4d10-b8ef-6e9b0010e90a"
   }
 }
