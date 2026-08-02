@@ -78,5 +78,33 @@
     "display_name": "Helsinki",
     "static_gtfs_url": "http://dev.hsl.fi/gtfs/hsl.zip",
     "timezone": "Europe/Helsinki"
+  },
+  "lublin": {
+    "display_name": "Lublin",
+    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/lublin.zip"
+  },
+  "radom": {
+    "display_name": "Radom",
+    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/radom.zip"
+  },
+  "rybnik": {
+    "display_name": "Rybnik",
+    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/rybnik.zip"
+  },
+  "elblag": {
+    "display_name": "Elbląg",
+    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/elblag.zip"
+  },
+  "przemysl": {
+    "display_name": "Przemyśl",
+    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/przemysl.zip"
+  },
+  "lka": {
+    "display_name": "Łódzka Kolej Aglomeracyjna",
+    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/lodz-lka.zip"
+  },
+  "suwalki": {
+    "display_name": "Suwałki",
+    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/suwalki.zip"
   }
 }
