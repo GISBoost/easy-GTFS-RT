@@ -522,6 +522,53 @@ jobs:
           gh release upload "$TAG" "${ASSETS[@]}" --clobber \
             || echo "::warning::gh release upload for the diff chart failed - not fatal, the GTFS release itself already succeeded."
 
+      - name: Install transit_charts dependencies
+        # Own requirements.txt (tools/transit_charts, pandas + matplotlib) - deliberately its own
+        # step, same reasoning as the diff-chart deps above: this tool has its own venv/deps file
+        # and is never installed on the Termux phone. Best-effort, same as every step below: this
+        # only enriches an already-published release.
+        id: tidy_deps
+        if: success() && steps.existing_release.outputs.exists != 'true'
+        continue-on-error: true
+        run: pip install -r easy-otp-src/tools/transit_charts/requirements.txt
+
+      - name: Extract tidy table for transit_charts (best-effort)
+        # Whole-feed (no --route filter): the point of publishing this table is letting someone
+        # rebuild ANY chart from it locally, not just one line - see
+        # tools/transit_charts/README.md §10 in easy-OTP, which is where this asset was proposed.
+        # continue-on-error: a malformed/empty matched.csv (e.g. the zero-observations case Match
+        # already fails the job on above) must not retroactively take down a release that already
+        # succeeded.
+        id: tidy_extract
+        if: success() && steps.existing_release.outputs.exists != 'true' && steps.tidy_deps.outcome == 'success'
+        continue-on-error: true
+        working-directory: easy-otp-src/tools/transit_charts
+        run: |
+          set -uo pipefail
+          python -m transit_charts.cli extract \
+            --matched "../family_a_reconstruction/matched_${CITY}_${DATE}.csv" \
+            --static "../../../static_gtfs.zip" \
+            --city "${CITY}" \
+            --out "../../../${CITY}_tidy_${DATE}.csv.gz"
+
+      - name: Upload tidy table to the release (best-effort)
+        # Same shape as the diff-chart upload above: attached via `gh release upload` to the SAME
+        # release Publish already created, never folded into `gh release create` itself, so a
+        # failure here can never block or invalidate the GTFS release that actually matters.
+        # `--clobber` makes a manual re-run of just this step idempotent.
+        if: success() && steps.existing_release.outputs.exists != 'true' && steps.tidy_extract.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          TAG="${CITY}-realized-${DATE}-phone"
+          ASSET="${CITY}_tidy_${DATE}.csv.gz"
+          if [ ! -f "$ASSET" ]; then
+            echo "::warning::No tidy-table output file found to upload. Not fatal - the GTFS release itself already succeeded."
+            exit 0
+          fi
+          gh release upload "$TAG" "$ASSET" --clobber \
+            || echo "::warning::gh release upload for the tidy table failed - not fatal, the GTFS release itself already succeeded."
+
       - name: Delete the phone's now-consumed raw-data release
         # Unlike FA-7 (whose raw artifacts self-expire via retention-days: 2), TX-3 uploads raw
         # recordings as a GitHub Release via plain curl (to avoid installing `gh` on the phone),

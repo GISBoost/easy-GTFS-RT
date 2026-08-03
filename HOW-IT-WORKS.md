@@ -360,10 +360,18 @@ Everything here is reproducible from public artifacts. Each daily release contai
 | `<city>_realized_<date>_p85.zip` | 85th-percentile-corrected timetable |
 | `<city>_diff_<date>_p50_summary.csv` | Per-route delay statistics for that day |
 | `<city>_diff_<date>_p50_chart.png` | Mean delay by time of day |
+| `<city>_tidy_<date>.csv.gz` | The whole-feed tidy table — one row per scheduled stop crossing, the exact input every [`transit_charts`](https://github.com/GISBoost/easy-OTP/tree/main/tools/transit_charts) chart reads |
 
 The summary CSV gives, per `route_id`: row count, how many changed, `pct_changed`, and mean /
 mean-absolute / stdev / min / max delay in seconds, plus an `ALL` row. Read `pct_changed` against
 §4's ceiling caveat.
+
+The tidy table lets you rebuild any of `transit_charts`' punctuality/regularity/speed charts
+locally, for any route, without needing the raw GPS recordings (already deleted by the time the
+release is published) or re-running `match`/`extract` yourself — see that tool's
+[README](https://github.com/GISBoost/easy-OTP/tree/main/tools/transit_charts#readme) for the exact
+`transit_charts chart ...` invocation. This asset is forward-only: it appears starting with each
+city's first build after it shipped, and is not backfilled onto releases published before that.
 
 To go deeper, the reconstruction tool itself is open and runnable:
 [`tools/family_a_reconstruction/`](https://github.com/GISBoost/easy-OTP/tree/main/tools/family_a_reconstruction)

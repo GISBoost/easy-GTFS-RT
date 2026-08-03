@@ -365,10 +365,19 @@ Wszystko powyżej da się odtworzyć z publicznych artefaktów. Każdy dzienny r
 | `<miasto>_realized_<data>_p85.zip` | Rozkład skorygowany 85. percentylem |
 | `<miasto>_diff_<data>_p50_summary.csv` | Statystyki opóźnień per trasa dla tego dnia |
 | `<miasto>_diff_<data>_p50_chart.png` | Średnie opóźnienie wg pory dnia |
+| `<miasto>_tidy_<data>.csv.gz` | Tabela tidy dla całego feedu — jeden wiersz na zaplanowane minięcie przystanku, dokładnie to wejście, które czyta każdy wykres [`transit_charts`](https://github.com/GISBoost/easy-OTP/tree/main/tools/transit_charts) |
 
 CSV podsumowania podaje, per `route_id`: liczbę wierszy, ile się zmieniło, `pct_changed` oraz
 średnie / średnie bezwzględne / odchylenie / min / max opóźnienie w sekundach, plus wiersz `ALL`.
 `pct_changed` czytaj z zastrzeżeniem o suficie z §4.
+
+Tabela tidy pozwala odtworzyć lokalnie dowolny wykres punktualności/regularności/prędkości
+z `transit_charts`, dla dowolnej linii, bez potrzeby surowych nagrań GPS (skasowanych zanim release
+zostanie opublikowany) ani ponownego uruchamiania `match`/`extract` samemu — dokładną komendę
+`transit_charts chart ...` znajdziesz w [README tego
+narzędzia](https://github.com/GISBoost/easy-OTP/tree/main/tools/transit_charts#readme). Ten
+załącznik działa tylko w przód: pojawia się od pierwszego builda danego miasta po jego wdrożeniu
+i nie jest doklejany do release'ów opublikowanych wcześniej.
 
 Żeby wejść głębiej — samo narzędzie rekonstrukcji jest otwarte i uruchamialne:
 [`tools/family_a_reconstruction/`](https://github.com/GISBoost/easy-OTP/tree/main/tools/family_a_reconstruction)
