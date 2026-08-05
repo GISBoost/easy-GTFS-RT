@@ -74,11 +74,6 @@
     "display_name": "Kielce",
     "static_gtfs_url": "https://ztm.kielce.pl/GTFS/GTFS.zip"
   },
-  "helsinki": {
-    "display_name": "Helsinki",
-    "static_gtfs_url": "http://dev.hsl.fi/gtfs/hsl.zip",
-    "timezone": "Europe/Helsinki"
-  },
   "lublin": {
     "display_name": "Lublin",
     "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/lublin.zip"
