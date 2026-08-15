@@ -105,5 +105,34 @@
   "gzm": {
     "display_name": "GZM (Górnośląsko-Zagłębiowska Metropolia)",
     "static_gtfs_ckan_package_id": "317435cc-0075-4d10-b8ef-6e9b0010e90a"
+  },
+  "helsinki": {
+    "display_name": "Helsinki",
+    "static_gtfs_url": "http://dev.hsl.fi/gtfs/hsl.zip",
+    "timezone": "Europe/Helsinki"
+  },
+  "amsterdam": {
+    "display_name": "Amsterdam",
+    "static_gtfs_url": "http://gtfs.ovapi.nl/gtfs-nl.zip"
+  },
+  "zagreb": {
+    "display_name": "Zagreb",
+    "static_gtfs_url": "https://www.zet.hr/gtfs-scheduled/latest",
+    "timezone": "Europe/Zagreb"
+  },
+  "nicosia": {
+    "display_name": "Nicosia",
+    "static_gtfs_url": "https://motionbuscard.org.cy/opendata/downloadfile?file=GTFS%5C9_google_transit.zip&rel=True",
+    "timezone": "Asia/Nicosia"
+  },
+  "riga": {
+    "display_name": "Riga",
+    "static_gtfs_url": "https://saraksti.rigassatiksme.lv/riga/gtfs.zip",
+    "timezone": "Europe/Riga"
+  },
+  "ljubljana": {
+    "display_name": "Ljubljana",
+    "static_gtfs_url": "https://data.lpp.si/api/gtfs/feed.zip",
+    "timezone": "Europe/Ljubljana"
   }
 }
