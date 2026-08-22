@@ -175,6 +175,14 @@ liniowo między nimi.
   nawiasującą, jeden zły ping „rozlewa się". Zmierzone w Bukareszcie: **1414 anomalnych par surowych
   odczytów wyjaśniło 3613 odrzuconych obserwacji segmentów — wzmocnienie 2,56×**, bo tamtejsze
   przystanki leżą blisko siebie.
+- **Na samym początku kursu para nawiasująca często nie nawiasuje niczego.** Pojazd stojący na
+  pętli początkowej ma już przypięty `trip_id` następnego kursu, więc wszystkie pingi z tego
+  postoju rzutują się na pierwszy przystanek. Wybierana jest *pierwsza* para, która go nawiasuje —
+  a to znaczy, że moment **dojazdu na postój** zostaje zapisany jako moment minięcia przystanku 1,
+  i cały postój jest zaksięgowany jako czas przejazdu pierwszej pary przystanków. Zmierzone
+  w dziewięciu miastach: implikowana prędkość pierwszej pary to **2,5–12 km/h wobec normy
+  16–27 km/h w środku kursu**; w Rzymie zajmuje ona medianie **624 s** tam, gdzie zwykła para
+  zajmuje 60 s. Co się z tym robi — §2.5; dlaczego to jeszcze nie wystarcza — §5.
 
 ### 2.5 Agregacja — łączenie obserwacji w statystyki segmentów
 
@@ -192,6 +200,27 @@ Każdy wymiar jest tam z powodu wyuczonego boleśnie:
   półrocznego feedu**, łącznie z kursami odjeżdżającymi o 3:48 nad ranem, których nagranie nie
   mogło zaobserwować. Bez tych dwóch wymiarów korekty przeciekają na pory i dni, dla których nie ma
   żadnych dowodów.
+
+Nie każda obserwacja trafia do puli. Dwie reguły odrzucają te, które nie mogą opisywać jadącego
+pojazdu:
+
+- **Implikowana prędkość poniżej 2 km/h jest odrzucana.** Na medianowej parze przystanków o długości
+  472 m to 14 minut na pokonanie jednego odcinka. Próg został skalibrowany na **823 081 surowych
+  obserwacjach** z czterech miast i wszystkich trzech klas sygnału (§3): przy 2 km/h łapie 31%
+  populacji znanej jako zła, kosztując **0,063%** zwykłych obserwacji ze środka kursu. To, co
+  usuwa, nie przypomina wolnego ruchu — odrzucone obserwacje mają średnio **806 s wobec 107 s**
+  dla zachowanych, na *krótszym* dystansie. To są pojazdy zaparkowane.
+- **Pierwsza para przystanków jest pomijana, gdy nagranie nie miało sygnału pozycji** (§3). Tam
+  postój opisany w §2.4 jest najgorszy: pierwsza para Gdańska jechała z medianą **1,8 km/h przy
+  rozkładowych 14,0 km/h**, a ten jeden segment odpowiadał za **63% raportowanego opóźnienia
+  miasta**. Dziś dotyczy to wyłącznie Gdańska, bo to jedyny monitorowany feed niepublikujący ani
+  `current_stop_sequence`, ani `stop_id`.
+
+**Co te dwie reguły kosztują:** pojazd naprawdę uwięziony w skrajnym korku jest nieodróżnialny od
+zaparkowanego i leci razem z nim, co przechyla wynik lekko w stronę *optymistyczną*, a nie
+pesymistycznej. Pominięcie pierwszej pary wyrzuca też realne spóźnienie odjazdu — choć pomiar
+stawia je na medianie **−16 do +15 s** wobec postojów o medianie 120–502 s, więc traci się bardzo
+mało prawdziwego sygnału.
 
 **Co to kosztuje — najbardziej niedoceniana własność tych danych:** jeden przejazd kursu wnosi
 **co najwyżej jedną obserwację** do danego klucza, bo kurs odwiedza daną parę kolejnych przystanków
@@ -258,6 +287,9 @@ Każda z nich to świadomy kompromis. Prawa kolumna mówi, co to znaczy dla Cieb
 | Luka = zachowaj rozkładowy czas | Jedyny uczciwy fallback; wymyślanie liczby byłoby gorsze | **Opóźnienie dokładnie 0 jest dwuznaczne**: albo naprawdę punktualnie, albo nigdy nie zaobserwowano |
 | Odrzucanie prędkości powyżej 100 km/h | Łapie artefakty interpolacji. Wessel i in. użyli 120 km/h, ale dla prędkości punkt-punkt z GPS; średnia przystanek-przystanek już absorbuje ruch uliczny, więc próg jest tu ostrzejszy | Legalnie szybkie połączenia też są odrzucane. W Pradze usuwa to **2187 z 123 833 kluczy**, prawie wyłącznie kolej regionalną |
 | Odrzucanie par nawiasujących odległych o ponad 300 s | Taka para mierzy rzadkość nagrywania, nie prędkość | Naprawdę wolne, rzadko śledzone segmenty tracą dane razem ze złymi |
+| Dopasowanie żywych pozycji tylko w oknie wokół przystanku raportowanego przez sam pojazd | Tam, gdzie feed RT publikuje `current_stop_sequence` albo `stop_id`, przypina to pojazd do konkretnego fragmentu trasy, co usuwa większość niejednoznaczności pętli z §2.2 | Feedy niepublikujące żadnego z tych pól nie dostają okna w ogóle. Z monitorowanych miast to wyłącznie Gdańsk; Wilno i Sofia mają `stop_id`, ale nie mają sekwencji |
+| Pominięcie pierwszej pary przystanków, gdy nie było okna | Bez okna cały postój na pętli rzutuje się na przystanek 1 (§2.4) | Realne spóźnienie odjazdu jest wyrzucane razem z postojem. Dotyczy **tylko** feedów bez sygnału pozycji, więc ten sam artefakt — mniejszy — zostaje wszędzie indziej (§5) |
+| Odrzucanie prędkości poniżej 2 km/h | Pojazd nie pokonuje medianowego odcinka 472 m przez 14 minut; takie obserwacje to pojazdy zaparkowane, a nie wolne | Skrajny korek jest odrzucany razem z nimi, co przechyla wynik lekko w stronę optymistyczną. Kosztuje 0,063% zwykłych obserwacji |
 | Korekta stosuje się do każdego kursu dzielącego klucz segmentu | Jedna obserwacja na klucz to często wszystko, co jest; bez dzielenia prawie nic by się nie skorygowało | Jedna błędna obserwacja propaguje się na wszystkie kursy tej trasy/kierunku/pary/kubełka |
 | P50 i P85 publikowane osobno | Mediana ukrywa ryzyko ogona; 85. percentyl to liczba do planowania | Żadna nie jest „tą właściwą"; wybierasz zależnie od zastosowania |
 | Brak zewnętrznego silnika routingu | Narzędzie zostaje bez zależności i przenośne na telefon | Dopasowanie jest czysto geometryczne, bez pojęcia ciągłości trajektorii — stąd niejednoznaczność pętli z §2.3 |
@@ -317,6 +349,54 @@ typowym, zob. §2.5 — „85. percentyl" jest interpolacją między dwoma czy t
 oszacowaniem ogona rozkładu. Nadal jest z tych dwóch liczb ostrożniejszy, ale przy takiej
 liczebności próby nie czytaj go jako twierdzenia o rozkładzie.
 
+### Metoda zmieniła się 2026-07-30
+
+Dwie reguły z §2.5 — pominięcie pierwszej pary przystanków bez okna oraz odrzucanie implikowanych
+prędkości poniżej 2 km/h — weszły razem. **Release'y opublikowane przed tą datą powstały bez nich.**
+
+Ich efekt zmierzono, przebudowując zarchiwizowane nagrania dwukrotnie, starym i nowym kodem,
+względem **tego samego** zarchiwizowanego feedu statycznego — więc jedyną różnicą między
+przebiegami jest sama metoda: 51 dni-miast w 12 miastach, 2026-07-14 do 2026-07-29. Wartości to
+średnie opóźnienie w sekundach; liczba per miasto to mediana po dniach tego miasta.
+
+| Miasto | dni | przed | po | zmiana |
+|---|---:|---:|---:|---:|
+| Gdańsk | 3 | 141,8 s | 34,2 s | **−78%** |
+| Praga | 2 | 171,6 s | 89,3 s | −50% |
+| Brisbane | 3 | 134,2 s | 56,1 s | −58% |
+| Bukareszt | 7 | 65,5 s | 13,9 s | **−79%** |
+| Rzym | 3 | 51,1 s | 10,3 s | **−83%** |
+| Boston | 3 | 93,1 s | 56,3 s | −39% |
+| Poznań | 2 | 41,4 s | 10,3 s | −73% |
+| Wilno | 8 | 53,2 s | 45,4 s | −16% |
+| Lizbona | 3 | 7,7 s | 2,7 s | −44% |
+| Szczecin | 3 | 10,7 s | 6,4 s | −37% |
+| Łódź | 11 | 16,9 s | 16,6 s | −6% |
+| Sofia | 3 | 71,0 s | 70,9 s | −0% |
+| **razem** | **51** | **40,1 s** | **16,9 s** | **−34%** |
+
+Opóźnienia liczone są tak, jak liczą je release'y danego miasta: jeżeli miasto wyklucza jakieś
+linie z dopasowywania, są one wykluczone i tutaj. Dotyczy to dokładnie jednego miasta — Bukareszt
+wyklucza pięć linii metra, których `trip_id` powtarzają się dla niepowiązanych odjazdów i nie dają
+się dopasować.
+
+47 z 51 dni poszło w dół. Trzy z czterech, które poszły w górę, ruszyły się o mniej niż dwie
+sekundy; czwarty, Boston 2026-07-27, to wadliwy build produkcyjny, a nie skutek tej zmiany.
+
+Najbardziej użyteczny jest wiersz, w którym **Sofia i Łódź prawie się nie ruszają** — tam, gdzie
+artefaktu postoju nie ma, filtry milczą, i to jest dowód, że próg 2 km/h nie ścina po cichu
+prawdziwej wolnej jazdy wszędzie.
+
+Zatem: **nie porównuj release'u sprzed tej zmiany z release'em po niej** i nie czytaj różnicy jako
+zmiany punktualności miasta. Pamiętaj też, że wszystkie dni stojące za tą tabelą wypadają
+w wakacjach szkolnych, kiedy oferta jest rzadsza, a postoje na pętlach prawdopodobnie dłuższe niż
+w roku szkolnym.
+
+Na koniec: żadna z tych kolumn nie jest ground truth. Obie są rekonstrukcjami; tabela pokazuje
+wielkość i kierunek zmiany metody, a nie zmierzoną poprawę dokładności. Argument, że nowy kierunek
+jest poprawny, opiera się na mechanizmie z §2.4 — pojazd stojący to nie pojazd wolny — a nie na
+tym porównaniu.
+
 ---
 
 ## 5. Co obecnie wiadomo, że jest zepsute
@@ -334,13 +414,22 @@ To lista żywa, nie wyczerpująca. Sprawy są śledzone w
 | **Poznań** | Przewoźnik publikuje statykę następnego okresu kilka dni wcześniej, więc build może użyć feedu jeszcze nieważnego dla nagranego dnia | Mniej więcej **1 dzień na 3** jest mocno zdegradowany. Dwa z sześciu zbadanych dni miały feed zaczynający się *po* dacie nagrania |
 | **Łódź** | **97 `shape_id` z `trips.txt` nie ma w `shapes.txt` żadnej geometrii** (18 z nich na samej linii `603`) — defekt w eksporcie samego przewoźnika | Dotknięte linie są niewidoczne: linia `603` dała **7478 obserwacji, wszystkie bezużyteczne**, a linia `R9` jest dotknięta **każdego zarchiwizowanego dnia**. Ich czasy to czysty rozkład |
 | **Praga** | Płaski próg 100 km/h odrzuca legalną kolej regionalną | **2187 z 123 833 kluczy segmentu** odrzuconych, prawie wyłącznie `route_type=2`. Praska kolej jest niedokorygowana względem tramwajów i autobusów |
-| **Bukareszt** | Jego surowy feed ma ~6–8× wyższy odsetek pojedynczych złych odczytów GPS niż Poznań czy Łódź (0,267% wobec 0,035–0,041% kolejnych par) | Więcej segmentów odrzuconych jako nieprawdopodobne. Filtr działa poprawnie; to wejście jest bardziej zaszumione |
-| **Wilno** | Jedyne miasto bez `current_stop_sequence`, więc dopasowanie żywych pozycji opiera się wyłącznie na `stop_id` | Znana regresja skupiona na linii `A62`, której geometria źle współgra z oknem dopasowania. Odtwarzalna w każdym zbadanym dniu |
+| **Bukareszt** | Dwa niezależne problemy. Jego statyczny feed zostawia `arrival_time`/`departure_time` **puste** na przystankach niebędących timepointami — to legalny GTFS, który ten pipeline czytał jako `00:00:00` do 2026-07-30. Osobno: jego surowe pozycje mają ~6–8× wyższy odsetek pojedynczych złych odczytów GPS niż Poznań czy Łódź (0,267% wobec 0,035–0,041% kolejnych par) | Puste czasy siedzą **wyłącznie na pięciu liniach metra**, które i tak są wykluczone z dopasowywania i z publikowanych statystyk — więc wykresy opóźnień nigdy nie były tym dotknięte. Był tym dotknięty sam **plik**: wiersze sięgały **141 godzin**, co czyniło go bezużytecznym dla routera. Naprawione 2026-07-30 przez interpolację między timepointami, bez zmiany jakiejkolwiek publikowanej liczby. Szum GPS to osobny, znacznie mniejszy efekt: więcej segmentów odrzuconych jako nieprawdopodobne, przy filtrze działającym poprawnie na bardziej zaszumionym wejściu |
+| **Wilno** | Jego feed nie publikuje `current_stop_sequence` — tak samo Sofia — więc dopasowanie żywych pozycji opiera się wyłącznie na `stop_id` | Znana regresja skupiona na linii `A62`, której geometria źle współgra z oknem dopasowania. Odtwarzalna w każdym zbadanym dniu |
 
 ### Dotyczące wszystkich miast
 
 - **Opóźnienie to suma bieżąca, nie pomiar per przystanek** (§2.6). Częściowo strukturalne, nie w
   pełni prawdziwe.
+- **Pierwsza para przystanków w większości miast wciąż wchłania postoje na pętli.** Reguła z §2.5
+  odpala się tylko tam, gdzie feed nie publikuje żadnego sygnału pozycji — czyli dziś w Gdańsku.
+  Wszędzie indziej pierwsza para nadal jedzie **2,5–12 km/h wobec normy 16–27 km/h w środku
+  kursu**, więc początkowy segment kursu pozostaje jego najmniej wiarygodną częścią, a próg
+  2 km/h łapie tylko przypadki najbardziej skrajne. Bezwarunkowe pomijanie pierwszej pary jest
+  zmierzone i zrozumiane, ale jeszcze nierozstrzygnięte: kosztowałoby poniżej 1,2% obserwacji
+  w każdym mieście i zepchnęłoby Rzym, Boston i Lizbonę do *ujemnego* średniego opóźnienia —
+  prawdopodobnie zgodnie z prawdą dla miast z napompowanymi rozkładami, ale to zmiana na tyle
+  duża, że wymaga świadomej decyzji.
 - **Cienkie próby.** Do ~47% kluczy segmentu opiera się na jednej obserwacji (§2.5).
 - **Zerowe opóźnienie jest dwuznaczne** (§4).
 - **`day_type` to lokalna data kalendarzowa, nie doba serwisowa GTFS.** Kurs nocny zaobserwowany

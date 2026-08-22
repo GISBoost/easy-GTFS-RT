@@ -173,6 +173,14 @@ between them.
   distance falls inside the same bad pair gets the same bogus bracket, one wrong ping "fans out".
   Measured in Bucharest: **1,414 anomalous raw pairs explained 3,613 rejected segment
   observations — a 2.56x amplification**, because its stops sit close together.
+- **At the very start of a trip the bracketing pair often straddles nothing at all.** A vehicle
+  standing on its origin terminus already carries the next trip's `trip_id`, so every ping from
+  that layover projects onto the first stop. The pair chosen is the *first* one that brackets it,
+  which means the moment the vehicle **arrived to wait** is recorded as the moment it crossed
+  stop 1 — and the entire layover is then booked as travel time on the first stop pair. Measured
+  across nine cities, the first pair's implied speed is **2.5–12 km/h against a 16–27 km/h
+  mid-trip norm**; in Rome it takes a median of **624 s** where a normal pair takes 60 s. §2.5
+  says what is done about it, and §5 says why that is not yet enough.
 
 ### 2.5 Aggregate — pool observations into segment statistics
 
@@ -189,6 +197,27 @@ Each dimension is there for a reason, learned the hard way:
   single afternoon recording was found to have corrected **74% of a six-month feed**, including
   trips departing at 3:48 AM that the recording could not possibly have observed. Without these
   two dimensions, corrections leak across times and days they have no evidence for.
+
+Not every observation reaches the pool. Two rules drop the ones that cannot be describing a
+moving vehicle:
+
+- **An implied speed below 2 km/h is rejected.** Over a median stop pair of 472 m that would be
+  14 minutes to cover one hop. The threshold was calibrated on **823,081 raw observations** across
+  four cities and all three signal classes (§3): at 2 km/h it catches 31% of the known-bad
+  population while costing **0.063%** of ordinary mid-trip observations. What it removes looks
+  nothing like slow traffic — the rejected observations average **806 s against 107 s** for those
+  kept, over a *shorter* distance. They are parked vehicles.
+- **The first stop pair is dropped when the recording had no position signal** (§3). That is where
+  the layover described in §2.4 is worst: Gdańsk's first pair ran at a median of **1.8 km/h for a
+  scheduled 14.0 km/h**, and that single segment accounted for **63% of the city's reported
+  delay**. Today this applies to Gdańsk alone, because it is the only monitored feed publishing
+  neither `current_stop_sequence` nor `stop_id`.
+
+**What those two cost:** a vehicle genuinely stuck in extreme congestion is indistinguishable from
+a parked one and is discarded with it, which biases the output slightly *optimistic* rather than
+pessimistic. Dropping the first pair also throws away any real departure lateness — though
+measurement puts that at a median of **−16 to +15 s**, against layovers with a median of
+120–502 s, so very little true signal is lost.
 
 **What that costs — the most under-appreciated property of this data:** one trip run contributes
 **at most one observation** to a given key, because a trip visits any consecutive stop pair once.
@@ -254,6 +283,9 @@ Every one of these is a deliberate trade-off. The right-hand column is what it m
 | Gap = keep the scheduled time | The only honest fallback; inventing a number would be worse | **A delay of exactly 0 is ambiguous**: either genuinely on time, or never observed |
 | Reject implied speeds over 100 km/h | Catches interpolation artifacts. Wessel et al. used 120 km/h, but on point-to-point GPS speeds; a stop-to-stop average already absorbs traffic, so the bound is tighter here | Legitimately fast services are rejected too. In Prague this removes **2,187 of 123,833 keys**, almost all regional rail |
 | Reject bracketing pairs more than 300 s apart | Such a pair measures recording sparsity, not speed | Genuinely slow, sparsely-tracked segments lose data along with the bad ones |
+| Match live positions only within a window around the vehicle's own reported stop | Where the RT feed publishes `current_stop_sequence` or `stop_id`, it pins which part of the route the vehicle is on, which removes most of the loop ambiguity in §2.2 | Feeds publishing neither get no window at all. Of the monitored cities that is Gdańsk only; Vilnius and Sofia have `stop_id` but no sequence |
+| Drop the first stop pair when there was no window | Without a window the whole terminus layover projects onto stop 1 (§2.4) | Real departure lateness is discarded along with the layover. Applies **only** to feeds with no position signal, so the same artifact remains — smaller — everywhere else (§5) |
+| Reject implied speeds below 2 km/h | A vehicle does not take 14 minutes over a 472 m median hop; those observations are parked vehicles, not slow ones | Extreme congestion is rejected together with them, biasing results slightly optimistic. Costs 0.063% of ordinary observations |
 | Correction applies to every trip sharing a segment key | One observation per key is often all there is; without sharing, almost nothing would be corrected | One wrong observation propagates to every trip on that route/direction/stop-pair/bucket |
 | P50 and P85 published separately | Median hides tail risk; the 85th percentile is the planning number | Neither is "the" answer; pick per use case |
 | No external routing engine | Keeps the tool dependency-free and portable to a phone | Map-matching is geometric only, with no notion of trajectory continuity — hence the loop ambiguity in §2.3 |
@@ -312,6 +344,54 @@ percentile" is an interpolation between two or three readings, not a tail estima
 the more conservative of the two numbers, but do not read it as a distributional claim at that
 sample size.
 
+### The method changed on 2026-07-30
+
+The two rules in §2.5 — dropping the unwindowed first stop pair, and rejecting implied speeds
+below 2 km/h — landed together. **Releases published before that date were built without them.**
+
+Their effect was measured by rebuilding archived recordings twice, with the old code and the new,
+against the **same** archived static feed, so the only difference between the two runs is the
+method itself: 51 city-days across 12 cities, 2026-07-14 to 2026-07-29. Values are the mean delay
+in seconds; the per-city figure is the median across that city's days.
+
+| City | days | before | after | change |
+|---|---:|---:|---:|---:|
+| Gdańsk | 3 | 141.8 s | 34.2 s | **−78%** |
+| Prague | 2 | 171.6 s | 89.3 s | −50% |
+| Brisbane | 3 | 134.2 s | 56.1 s | −58% |
+| Bucharest | 7 | 65.5 s | 13.9 s | **−79%** |
+| Rome | 3 | 51.1 s | 10.3 s | **−83%** |
+| Boston | 3 | 93.1 s | 56.3 s | −39% |
+| Poznań | 2 | 41.4 s | 10.3 s | −73% |
+| Vilnius | 8 | 53.2 s | 45.4 s | −16% |
+| Lisbon | 3 | 7.7 s | 2.7 s | −44% |
+| Szczecin | 3 | 10.7 s | 6.4 s | −37% |
+| Łódź | 11 | 16.9 s | 16.6 s | −6% |
+| Sofia | 3 | 71.0 s | 70.9 s | −0% |
+| **all** | **51** | **40.1 s** | **16.9 s** | **−34%** |
+
+Delays are measured the way each city's own releases are: where a city excludes routes from
+matching, the same routes are excluded here. That matters for exactly one city — Bucharest
+excludes its five metro lines, whose `trip_id`s recur for unrelated departures and cannot be
+matched.
+
+47 of the 51 days moved down. Three of the four that moved up did so by under two seconds; the
+fourth, Boston 2026-07-27, is a defective production build rather than an effect of the change.
+
+The most useful row is **Sofia and Łódź barely moving** — where the layover artifact is absent,
+the filters stay silent, which is the evidence that the 2 km/h bound is not quietly shaving
+legitimate slow running everywhere.
+
+So: **do not compare a release from before this change against one from after it** and read the
+difference as a change in the city's punctuality. Note also that all the days behind this table
+fall in the school-holiday period, when service is thinner and terminus layovers are plausibly
+longer than in term time.
+
+Finally, neither column is ground truth. Both are reconstructions; the table shows the size and
+direction of a method change, not a measured improvement in accuracy. The argument that the new
+direction is the correct one rests on the mechanism in §2.4 — a stationary vehicle is not a slow
+vehicle — and not on this comparison.
+
 ---
 
 ## 5. What is known to be wrong right now
@@ -329,13 +409,21 @@ This is a living list; it is not exhaustive. Issues are tracked in
 | **Poznań** | The agency publishes the next period's static feed several days early, so a build can use a feed not yet valid for the recorded day | Roughly **1 day in 3** is badly degraded. Two of six sampled days had a static feed starting *after* the recording date |
 | **Łódź** | **97 `shape_id`s referenced by `trips.txt` have no geometry at all** in `shapes.txt` (18 of them on route `603` alone) — a defect in the agency's own export | Affected routes are invisible: route `603` produced **7,478 observations, all unusable**, and route `R9` is affected on **every archived day**. Their times are pure schedule |
 | **Prague** | The flat 100 km/h plausibility filter rejects legitimate regional rail | **2,187 of 123,833 segment keys** dropped, almost all `route_type=2`. Prague's rail is under-corrected relative to its trams and buses |
-| **Bucharest** | Its raw feed has a ~6–8x higher rate of isolated bad GPS readings than Poznań or Łódź (0.267% vs 0.035–0.041% of consecutive pairs) | More segments rejected as implausible. The filter is working correctly; the input is noisier |
-| **Vilnius** | It is the only city with no `current_stop_sequence`, so live-position matching relies on `stop_id` alone | A known regression concentrated on route `A62`, whose geometry interacts badly with the matching window. Reproducible across every day tested |
+| **Bucharest** | Two unrelated problems. Its static feed leaves `arrival_time`/`departure_time` **empty** at non-timepoint stops — legal GTFS, which this pipeline read as `00:00:00` until 2026-07-30. Separately, its raw positions carry a ~6–8x higher rate of isolated bad GPS readings than Poznań or Łódź (0.267% vs 0.035–0.041% of consecutive pairs) | The blank times sit **entirely on the five metro lines**, which are already excluded from matching and from the published statistics — so the delay charts were never affected. The realized **file** was: rows reached **141 hours**, which would make it useless to a router. Fixed 2026-07-30 by interpolating between timepoints, with no change to any published number. The GPS noise is separate and much smaller: more segments rejected as implausible, with the filter working correctly on a noisier input |
+| **Vilnius** | Its feed publishes no `current_stop_sequence` — Sofia is the same — so live-position matching relies on `stop_id` alone | A known regression concentrated on route `A62`, whose geometry interacts badly with the matching window. Reproducible across every day tested |
 
 ### Affecting every city
 
 - **Delay is a running total, not a per-stop measurement** (§2.6). Partly structural, not purely
   real.
+- **The first stop pair still absorbs terminus layovers in most cities.** The rule in §2.5 fires
+  only where the feed publishes no position signal at all — Gdańsk today. Everywhere else the
+  first pair still runs at **2.5–12 km/h against a 16–27 km/h mid-trip norm**, so the opening
+  segment of a trip remains the least trustworthy part of it, and the 2 km/h bound catches only
+  the most extreme cases. Making the skip unconditional is measured and understood but not yet
+  decided: it would cost under 1.2% of observations per city, and would push Rome, Boston and
+  Lisbon to a *negative* mean delay — plausibly the true picture for cities whose timetables are
+  padded, but a large enough change to want deliberate sign-off.
 - **Thin samples.** Up to ~47% of segment keys rest on a single observation (§2.5).
 - **A zero delay is ambiguous** (§4).
 - **Day type is the local calendar day, not GTFS's service day.** An overnight trip observed just
