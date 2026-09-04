@@ -118,7 +118,7 @@
   },
   "riga": {
     "display_name": "Riga",
-    "static_gtfs_url": "https://saraksti.rigassatiksme.lv/riga/gtfs.zip",
+    "static_gtfs_ckan_url": "https://data.gov.lv/dati/api/3/action/package_show?id=6d78358a-0095-4ce3-b119-6cde5d0ac54f",
     "timezone": "Europe/Riga"
   },
   "ljubljana": {

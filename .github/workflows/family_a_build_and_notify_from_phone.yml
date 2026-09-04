@@ -174,6 +174,19 @@ jobs:
           CKAN_PACKAGE_ID="$(jq -r --arg c "$CITY" '.[$c].static_gtfs_ckan_package_id // empty' config/cities.json)"
           echo "static_gtfs_ckan_package_id=$CKAN_PACKAGE_ID" >> "$GITHUB_OUTPUT"
 
+          # Riga only (2026-09-04): saraksti.rigassatiksme.lv (the old static_gtfs_url) has been
+          # completely unreachable since 2026-08-16 (confirmed independently by Transitland's own
+          # fetcher, not just this repo). Rīgas Satiksme's static GTFS is actually published
+          # monthly on data.gov.lv (Latvia's national CKAN open-data portal) - a FULL CKAN
+          # package_show API URL, not just a package id, since (unlike GZM's own portal) there's
+          # no reason to assume every future CKAN-published city lives on the same host. Distinct
+          # from static_gtfs_ckan_package_id above: this dataset has one new resource per month,
+          # "latest by last_modified" - a different, much simpler resolution than GZM's
+          # same-day/multiple-candidates case, so it gets its own field and its own branch below
+          # rather than being forced through GZM's date-range matching.
+          CKAN_URL="$(jq -r --arg c "$CITY" '.[$c].static_gtfs_ckan_url // empty' config/cities.json)"
+          echo "static_gtfs_ckan_url=$CKAN_URL" >> "$GITHUB_OUTPUT"
+
           # Optional per-city route_ids to drop before matching (space-separated, safe here -
           # route_id values in this repo's cities.json are always plain alphanumeric strings, no
           # spaces) - see family_a.matcher.load_trip_shape_index's docstring: for a route whose
@@ -222,6 +235,55 @@ jobs:
         run: |
           set -euo pipefail
           CKAN_PACKAGE_ID="${{ steps.city.outputs.static_gtfs_ckan_package_id }}"
+          CKAN_URL="${{ steps.city.outputs.static_gtfs_ckan_url }}"
+
+          if [ -n "$CKAN_URL" ]; then
+            # Riga only (see the Look up city config step's comment for why this is separate from
+            # static_gtfs_ckan_package_id below): one new ZIP resource per month, no same-day
+            # candidates to disambiguate - "latest" is just the resource with the newest
+            # last_modified, no feed_info.txt date-range check needed.
+            echo "Resolving static GTFS via CKAN package_show at $CKAN_URL..."
+            DOWNLOAD_URL="$(curl -fsSL "$CKAN_URL" | jq -r '
+              .result.resources
+              | map(select(.format == "ZIP"))
+              | sort_by(.last_modified)
+              | last
+              | .url
+            ')"
+            if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+              echo "::error::No ZIP resources found via CKAN package_show at $CKAN_URL"
+              exit 1
+            fi
+            echo "Using $DOWNLOAD_URL"
+            curl -fsSL -o static_gtfs.zip "$DOWNLOAD_URL"
+
+            # data.gov.lv ships every GTFS file one level deep (e.g.
+            # MarsrutuSaraksti07_2026/trips.txt), not at the zip root - family_a's loaders check
+            # for exact root-level names (trips.txt, stop_times.txt, ...), so flatten here rather
+            # than teaching every loader to unwrap a variable, resource-name-dependent prefix.
+            # Detects nesting rather than assuming it, so a future publication that already ships
+            # root-level files is not needlessly repackaged. Verified end-to-end (2026-09-04)
+            # against family_a.cli's own _validate_static_gtfs/_validate_static_gtfs_for_match on
+            # the actual downloaded file, not just reasoned about.
+            if ! unzip -Z1 static_gtfs.zip | grep -qx "trips.txt"; then
+              echo "GTFS files are nested inside the zip - flattening..."
+              python3 - <<'PYEOF'
+          import zipfile
+          with zipfile.ZipFile("static_gtfs.zip") as zf:
+              names = [n for n in zf.namelist() if not n.endswith("/")]
+              tops = {n.split("/", 1)[0] for n in names if "/" in n}
+              if len(tops) != 1:
+                  raise SystemExit(f"expected exactly one top-level directory to flatten, found {len(tops)}: {sorted(tops)}")
+              prefix = tops.pop() + "/"
+              data = {n[len(prefix):]: zf.read(n) for n in names if n.startswith(prefix)}
+          with zipfile.ZipFile("static_gtfs.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+              for name, content in data.items():
+                  zf.writestr(name, content)
+          PYEOF
+              echo "Flattened."
+            fi
+            exit 0
+          fi
 
           if [ -z "$CKAN_PACKAGE_ID" ]; then
             curl -fsSL -o static_gtfs.zip "${{ steps.city.outputs.static_gtfs_url }}"
