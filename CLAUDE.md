@@ -35,13 +35,13 @@ o przywróceniu nagrywania przez Actions.
   pliku/usługi na telefonie (`cities/<city>.env`, `family-a-record-<city>`, w `easy-OTP`).
   Nieznany `city` = jawny błąd joba (`resolve_targets`), nigdy cichy no-op.
 - Kod/komentarze/commity: po angielsku.
-- **Kolej ŁKA to osobna ścieżka.** ŁKA nie ma feedu VehiclePositions — jej zrealizowany
-  GTFS powstaje z krajowego agregatu TripUpdates (`mkuran.pl/gtfs/polish_trains`) przez
+- **Kolej ŁKA to osobna ścieżka, poza `config/cities.json`.** ŁKA nie ma feedu
+  VehiclePositions — jej nagrywanie z pozycji zostało wycofane 2026-09-09 (nagrywało złą,
+  autobusową sieć), a klucz `lka` usunięty z `cities.json`. Zrealizowany GTFS powstaje
+  z krajowego agregatu TripUpdates (`mkuran.pl/gtfs/polish_trains`) przez
   `polish-trains-tripupdates-fetch.yml` (backup) + telefonowy `fetch_polish_trains_rt.sh`
-  (TX-10, prymarny) → `easy-OTP/tools/family_b_realized/`. Nie przez `config/cities.json`,
-  nie przez matrycę `family_a`. Wpis `lka` w `cities.json` jest teraz tylko statyczny
-  (jego build z pozycji jest wycofany); metodyka:
-  `easy-R5/docs/notes/realized-gtfs-lka-tripupdates.md`.
+  (TX-10, prymarny) → `easy-OTP/tools/family_b_realized/`. Nie przez matrycę `family_a`.
+  Metodyka: `easy-R5/docs/notes/realized-gtfs-lka-tripupdates.md`.
 
 ## Workflow pracy
 Jeden kamień milowy (FA-7/FA-8/FA-9) = jeden branch, jeden prompt, STOP na ręczną weryfikację
