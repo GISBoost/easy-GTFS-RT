@@ -37,6 +37,18 @@ Many cities publish only the second one. **Delay is therefore never measured her
 reconstructed by inference** — from where vehicles were, when, and where the schedule says they
 should have been.
 
+> **One exception: `lka` (Łódzka Kolej Aglomeracyjna).** ŁKA rail publishes no
+> `VehiclePositions` feed at all. Its realized GTFS is instead built from the national
+> **`TripUpdates`** aggregate at `mkuran.pl/gtfs/polish_trains` (PKP PLK *Otwarte Dane*),
+> by a separate collector and converter — `GISBoost/easy-OTP`'s
+> `scripts/termux/fetch_polish_trains_rt.sh` (TX-10) + the
+> `polish-trains-tripupdates-fetch` workflow in this repo, feeding
+> `tools/family_b_realized/build_realized.py` (methodology:
+> `easy-R5/docs/notes/realized-gtfs-lka-tripupdates.md`). None of §2 below applies to it:
+> its stop times are reported, not inferred from positions. The older position-based
+> `lka` recordings (2026-08-02 … 2026-09-04) were of the wrong network — a
+> replacement-bus feed, not rail — and have been withdrawn from the dashboard.
+
 That one fact is the root of everything below. Because the delay is inferred rather than reported:
 
 - every number depends on a chain of intermediate decisions (which trip? where on the route? when

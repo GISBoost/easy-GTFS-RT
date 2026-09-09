@@ -96,7 +96,7 @@
   },
   "lka": {
     "display_name": "Łódzka Kolej Aglomeracyjna",
-    "static_gtfs_url": "https://cdn.zbiorkom.live/gtfs/lodz-lka.zip"
+    "static_gtfs_url": "https://mkuran.pl/gtfs/polish_trains.zip"
   },
   "suwalki": {
     "display_name": "Suwałki",

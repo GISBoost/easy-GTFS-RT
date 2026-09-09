@@ -37,6 +37,17 @@ Wiele miast publikuje wyłącznie ten drugi. **Opóźnienie nie jest więc tutaj
 rekonstruowane przez wnioskowanie** — z tego, gdzie pojazdy były, kiedy, i gdzie według rozkładu
 powinny być.
 
+> **Jeden wyjątek: `lka` (Łódzka Kolej Aglomeracyjna).** ŁKA nie publikuje w ogóle feedu
+> `VehiclePositions`. Jej zrealizowany GTFS powstaje z krajowego agregatu **`TripUpdates`**
+> `mkuran.pl/gtfs/polish_trains` (PKP PLK *Otwarte Dane*), osobnym kolektorem i konwerterem —
+> `GISBoost/easy-OTP` `scripts/termux/fetch_polish_trains_rt.sh` (TX-10) + workflow
+> `polish-trains-tripupdates-fetch` w tym repo, zasilające
+> `tools/family_b_realized/build_realized.py` (metodyka:
+> `easy-R5/docs/notes/realized-gtfs-lka-tripupdates.md`). Nic z §2 poniżej jej nie
+> dotyczy: czasy przystankowe są raportowane, nie wnioskowane z pozycji. Starsze
+> nagrania `lka` z pozycji (2026-08-02 … 2026-09-04) dotyczyły złej sieci — autobusów
+> zastępczych, nie kolei — i zostały wycofane z dashboardu.
+
 Ten jeden fakt jest korzeniem wszystkiego poniżej. Ponieważ opóźnienie jest wywnioskowane, a nie
 zaraportowane:
 

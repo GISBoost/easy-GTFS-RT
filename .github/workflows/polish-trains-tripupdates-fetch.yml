@@ -1,0 +1,85 @@
+name: Polish rail TripUpdates — fetch
+
+run-name: "polish_trains updates — ${{ github.event.inputs.date || 'yesterday' }}"
+
+# Backup collector for the mkuran.pl Polish national rail GTFS-RT TripUpdates aggregate
+# (https://mkuran.pl/gtfs/polish_trains/updates.pb). This is the ONLY realtime source for
+# Łódzka Kolej Aglomeracyjna (agency LKA) — ŁKA publishes no VehiclePositions feed, so the
+# family_a (VehiclePositions) pipeline cannot realize it. Background + the converter that
+# consumes these archives: GISBoost/easy-OTP tools/family_b_realized/ and
+# docs/reference/RT-3_realized-gtfs-notes.md there.
+#
+# Primary collector is the phone: GISBoost/easy-OTP scripts/termux/fetch_polish_trains_rt.sh
+# (TX-10), a cron job that runs earlier (03:30 Europe/Warsaw). It writes the SAME asset name
+# to the SAME monthly release as this workflow, so whichever runs first wins and the other
+# is a no-op. This workflow exists because the feed has ~2-day retention and no upstream
+# archive — a phone that has silently stopped (a known, undetected failure mode of the
+# Termux track) would otherwise lose a service day permanently. A ~10–25 min GitHub
+# schedule delay is irrelevant here: the previous service day is already fully settled.
+#
+# Deliberately standalone — not part of the family_a build matrix, not tied to
+# config/cities.json (this is a single national feed, not a city).
+
+on:
+  schedule:
+    # 03:30 UTC ≈ 04:30–05:30 Europe/Warsaw — well after the previous service day has settled.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: >-
+          Service day to fetch (YYYY-MM-DD). Leave empty for yesterday (UTC). Only useful
+          on the same or next day — the upstream feed keeps ~2 days.
+        required: false
+        default: ""
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      FEED_URL: https://mkuran.pl/gtfs/polish_trains/updates.pb
+      MIN_BYTES: "1000000"
+    steps:
+      - name: Fetch, compress, and archive the settled service day
+        run: |
+          set -euo pipefail
+          DAY="${{ github.event.inputs.date }}"
+          [ -n "$DAY" ] || DAY="$(date -u -d 'yesterday' +%F)"
+          MONTH="${DAY%-*}"
+          TAG="polish-trains-tripupdates-raw-${MONTH}"
+          ASSET="polish_trains_updates_${DAY}.pb.gz"
+          echo "service day ${DAY} -> ${TAG}/${ASSET}"
+
+          # Skip early if the phone (or an earlier run) already uploaded this day.
+          if gh release view "$TAG" --repo "$REPO" --json assets \
+               --jq '.assets[].name' 2>/dev/null | grep -qx "$ASSET"; then
+            echo "${ASSET} already on ${TAG} — nothing to do"
+            exit 0
+          fi
+
+          curl -fsSL --max-time 180 "$FEED_URL" | gzip -9 > "$ASSET"
+          SIZE=$(wc -c < "$ASSET")
+          if [ "$SIZE" -lt "$MIN_BYTES" ]; then
+            echo "::error::fetched file only ${SIZE} bytes (< ${MIN_BYTES}) — refusing to upload"
+            exit 1
+          fi
+
+          # Find or create this month's release (idempotent).
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --prerelease \
+              --title "Polish rail TripUpdates - raw ${MONTH}" \
+              --notes "Daily gzipped snapshots of ${FEED_URL} (GTFS-RT TripUpdates, PKP PLK Otwarte Dane), one per settled service day. The only realtime source for Łódzka Kolej Aglomeracyjna. Consumed by GISBoost/easy-OTP tools/family_b_realized/build_realized.py. Uploaded by the phone (scripts/termux/fetch_polish_trains_rt.sh) or this workflow, whichever runs first." \
+              || true   # a concurrent phone run may have created it between the check and here
+          fi
+
+          # Race-safe: if the phone uploaded in the meantime, this fails and we accept it.
+          if gh release upload "$TAG" "$ASSET" --repo "$REPO"; then
+            echo "uploaded ${ASSET} (${SIZE} bytes)"
+          else
+            echo "upload rejected (asset already present?) — treating as done"
+          fi
