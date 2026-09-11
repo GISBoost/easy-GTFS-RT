@@ -33,6 +33,9 @@ practical once you're past a handful of cities recording daily. It only reads th
 Releases API and `config/cities.json`, on its own daily schedule (04:00 UTC — late enough to have
 caught Boston, which publishes at 02:21–02:26 UTC); nothing here needs to change to support it.
 
+The wider chain this repo feeds — reconstruction, QGIS analysis, published maps and write-ups —
+is at **[gisboost.github.io](https://gisboost.github.io/)**.
+
 Between 2026-07-20 and 2026-07-29 this repo also pushed a `repository_dispatch` to that one after
 each publish, so the dashboard updated within seconds instead of waiting for its cron. That step
 is gone: releases appear at most once per city per day, which made near-instant refresh not worth
