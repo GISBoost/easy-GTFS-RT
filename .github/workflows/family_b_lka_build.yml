@@ -1,0 +1,171 @@
+name: GTFS-RT — build ŁKA (TripUpdates, Family B)
+
+run-name: "lka — build (tripupdates) — ${{ github.event.inputs.date || 'yesterday' }}"
+
+# Realized GTFS for Łódzka Kolej Aglomeracyjna (agency LKA), built from the national
+# TripUpdates aggregate — NOT from the family_a/VehiclePositions matrix in
+# family_a_build_and_notify_from_phone.yml. ŁKA has no VehiclePositions feed; its only
+# realtime source is the mkuran.pl Polish national rail TripUpdates aggregate, archived
+# daily by polish-trains-tripupdates-fetch.yml (backup) and the phone's
+# fetch_polish_trains_rt.sh (TX-10, primary). Full background:
+#   easy-R5/docs/notes/realized-gtfs-lka-tripupdates.md
+#   easy-OTP/tools/family_b_realized/README.md
+#
+# Deliberately standalone: not part of the family_a city matrix, not tied to
+# config/cities.json.
+#
+# Distinguishing flag: this publishes to tag `lka-realized-<date>-tripupdates` (note
+# "-tripupdates", not "-phone") and always as a GitHub *pre-release*. Three earlier
+# releases (lka-realized-2026-09-0{6,7,8}-phone) exist from the OLD, WRONG pipeline
+# (family_a_reconstruction against a mis-identified replacement-bus VehiclePositions
+# feed — see easy-R5/docs/notes/lka-gtfs-audit.md) and must never be confused with these -
+# gtfs-dashboard's refresh-manifest.yml (separate repo) now allows city=="lka" through
+# ONLY for the "-tripupdates" tag suffix, still dropping any stray "-phone" one.
+#
+# Single-day builds only for now: build_realized.py's multi-day pooling (recommended
+# once ~15-20 service days are archived, see the tripupdates note above) needs more
+# history than exists yet. A single day's P50/P85 already validated against real data
+# (see easy-OTP/tools/family_b_realized/README.md, 2026-09-08 sample) but segment pools
+# are thin — treat these as provisional per-day snapshots, not the intended multi-day
+# product.
+
+on:
+  schedule:
+    # 04:15 UTC: after both the phone's 03:30 Europe/Warsaw fetch and the
+    # polish-trains-tripupdates-fetch.yml 03:30 UTC backup have had time to land
+    # yesterday's snapshot on polish-trains-tripupdates-raw-<YYYY-MM>.
+    - cron: "15 4 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: >-
+          Service day to build (YYYY-MM-DD). Leave empty for yesterday (UTC) — must be a
+          day that already has a polish_trains_updates_<date>.pb.gz snapshot uploaded.
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: family-b-lka-build
+      cancel-in-progress: false
+    permissions:
+      contents: write   # gh release create/download/upload in this repo
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATIC_URL: https://mkuran.pl/gtfs/polish_trains.zip
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout easy-OTP (source of family_b_realized, read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: GISBoost/easy-OTP
+          path: easy-otp-src
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve target date
+        id: resolve
+        run: |
+          set -euo pipefail
+          OVERRIDE="${{ github.event.inputs.date }}"
+          if [ -n "$OVERRIDE" ]; then
+            DATE="$OVERRIDE"
+          else
+            # Same idiom as polish-trains-tripupdates-fetch.yml, so this always resolves
+            # to the same service day that workflow (or the phone) already fetched.
+            DATE="$(date -u -d 'yesterday' +%F)"
+          fi
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          echo "month=${DATE%-*}" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing release (idempotency guard)
+        id: existing_release
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+        run: |
+          set -euo pipefail
+          TAG="lka-realized-${DATE}-tripupdates"
+          if gh release view "$TAG" >/dev/null 2>err.log; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists - skipping the rest of this run."
+          elif grep -qi "not found" err.log; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::gh release view failed unexpectedly (not a plain \"not found\") - refusing to assume the release doesn't exist. Raw error follows:"
+            cat err.log >&2
+            exit 1
+          fi
+
+      - name: Download the day's raw TripUpdates snapshot
+        id: snapshot
+        if: steps.existing_release.outputs.exists != 'true'
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+          MONTH: ${{ steps.resolve.outputs.month }}
+        run: |
+          set -euo pipefail
+          TAG="polish-trains-tripupdates-raw-${MONTH}"
+          ASSET="polish_trains_updates_${DATE}.pb.gz"
+          mkdir -p raw
+          gh release download "$TAG" --dir raw --pattern "$ASSET" \
+            || { echo "::error::No ${ASSET} on release ${TAG} - the day's TripUpdates snapshot hasn't landed yet (phone TX-10 and/or polish-trains-tripupdates-fetch.yml). Nothing to build; will retry next scheduled run."; exit 1; }
+
+      - name: Download current static GTFS
+        if: steps.existing_release.outputs.exists != 'true'
+        run: curl -fsSL -o polish_trains.zip "$STATIC_URL"
+
+      - name: Install family_b_realized dependencies
+        if: steps.existing_release.outputs.exists != 'true'
+        working-directory: easy-otp-src/tools/family_b_realized
+        run: pip install -r requirements.txt
+
+      - name: Build realized GTFS (P50/P85)
+        id: build
+        if: steps.existing_release.outputs.exists != 'true'
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+        run: |
+          set -euo pipefail
+          python easy-otp-src/tools/family_b_realized/build_realized.py \
+            --snapshots raw --static polish_trains.zip \
+            --agency-id LKA --out-prefix "lka_realized_${DATE}" \
+            --service-days "$DATE" \
+            | tee build_output.log
+
+          # Pull the numbers back out for the release notes below, phrased to match
+          # gtfs-dashboard's refresh-manifest.yml parse.jq regexes ("N observations matched",
+          # "N segments corrected") so this shows up on the dashboard with real stats instead
+          # of nulls - best-effort only, never fails the build if the log shape ever changes.
+          OBSERVATIONS=$(grep -oE '^\[collect\] [0-9]+ segments, [0-9]+ observations' build_output.log | grep -oE '[0-9]+ observations' | grep -oE '[0-9]+' || echo "")
+          CORRECTED=$(grep -oE '^\[p50\].*: [0-9]+/[0-9]+ segments corrected' build_output.log | grep -oE '^\[p50\].*: [0-9]+' | grep -oE '[0-9]+$' || echo "")
+          echo "observations=${OBSERVATIONS}" >> "$GITHUB_OUTPUT"
+          echo "corrected=${CORRECTED}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release (in this repo — never in easy-OTP)
+        if: steps.existing_release.outputs.exists != 'true'
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+          OBSERVATIONS: ${{ steps.build.outputs.observations }}
+          CORRECTED: ${{ steps.build.outputs.corrected }}
+        run: |
+          set -euo pipefail
+          cp polish_trains.zip "lka_static_gtfs_${DATE}.zip"
+          STATS=""
+          if [ -n "$OBSERVATIONS" ] && [ -n "$CORRECTED" ]; then
+            STATS=" ${OBSERVATIONS} observations matched, ${CORRECTED} segments corrected."
+          fi
+          gh release create "lka-realized-${DATE}-tripupdates" \
+            "lka_realized_${DATE}_p50.zip" "lka_realized_${DATE}_p85.zip" \
+            "lka_static_gtfs_${DATE}.zip" \
+            --prerelease \
+            --title "Łódzka Kolej Aglomeracyjna — ${DATE} — realized GTFS (TripUpdates, provisional)" \
+            --notes "Automated single-day build from the mkuran.pl national rail TripUpdates aggregate (PKP PLK Otwarte Dane), via easy-OTP tools/family_b_realized/build_realized.py (RT-3 Family B engine) — NOT the family_a/VehiclePositions pipeline.${STATS} Actual recorded coverage: 00:00-23:59. (the national aggregate carries the whole elapsed service day, not a recording window). Marked pre-release: a single day's segment pools are thin; the intended product is a multi-day P50/P85 pool once ~15-20 service days are archived (see easy-R5/docs/notes/realized-gtfs-lka-tripupdates.md). Static GTFS used for this build also attached, for comparison across days. Source: GISBoost/easy-OTP tools/family_b_realized."
