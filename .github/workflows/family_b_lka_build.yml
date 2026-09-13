@@ -169,3 +169,55 @@ jobs:
             --prerelease \
             --title "Łódzka Kolej Aglomeracyjna — ${DATE} — realized GTFS (TripUpdates, provisional)" \
             --notes "Automated single-day build from the mkuran.pl national rail TripUpdates aggregate (PKP PLK Otwarte Dane), via easy-OTP tools/family_b_realized/build_realized.py (RT-3 Family B engine) — NOT the family_a/VehiclePositions pipeline.${STATS} Actual recorded coverage: 00:00-23:59. (the national aggregate carries the whole elapsed service day, not a recording window). Marked pre-release: a single day's segment pools are thin; the intended product is a multi-day P50/P85 pool once ~15-20 service days are archived (see easy-R5/docs/notes/realized-gtfs-lka-tripupdates.md). Static GTFS used for this build also attached, for comparison across days. Source: GISBoost/easy-OTP tools/family_b_realized."
+
+      - name: Install diff-chart dependencies
+        # Same tool family_a's build workflow uses (tools/analysis, matplotlib only) - it
+        # is engine-agnostic: it diffs any static feed against a "realized" feed that keeps
+        # trip_id/stop_id/stop_sequence unchanged, which build_realized.py's output does too
+        # (see gtfs_static_vs_realized_diff.py's own module docstring). Best-effort, same as
+        # family_a's build: never allowed to affect whether the GTFS release itself (already
+        # published above) is considered a success.
+        id: chart_deps
+        if: success() && steps.existing_release.outputs.exists != 'true'
+        continue-on-error: true
+        run: pip install -r easy-otp-src/tools/analysis/requirements.txt
+
+      - name: Generate static-vs-realized diff chart
+        # P50 only, same as family_a's build. --static is the unfiltered national
+        # polish_trains.zip (not agency-filtered) - the script joins static and realized
+        # stop_times.txt on (trip_id, stop_id, stop_sequence), so non-LKA static rows with
+        # no realized counterpart are simply never matched, no separate agency filter
+        # needed here. No --chart-start-hour/--chart-end-hour override: unlike family_a's
+        # fixed 6-22 recording window, this feed covers the whole service day, so the
+        # default auto-crop to the actual measured range is already the right window.
+        id: diff_chart
+        if: success() && steps.existing_release.outputs.exists != 'true' && steps.chart_deps.outcome == 'success'
+        continue-on-error: true
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+        run: |
+          set -uo pipefail
+          python easy-otp-src/tools/analysis/gtfs_static_vs_realized_diff.py \
+            --static polish_trains.zip \
+            --realized "lka_realized_${DATE}_p50.zip" \
+            --out-prefix "lka_diff_${DATE}_p50" \
+            --chart-title-prefix "Łódzka Kolej Aglomeracyjna — ${DATE}"
+
+      - name: Upload diff chart to the release (best-effort)
+        if: success() && steps.existing_release.outputs.exists != 'true' && steps.diff_chart.outcome == 'success'
+        continue-on-error: true
+        env:
+          DATE: ${{ steps.resolve.outputs.date }}
+        run: |
+          set -uo pipefail
+          TAG="lka-realized-${DATE}-tripupdates"
+          ASSETS=()
+          for f in "lka_diff_${DATE}_p50_chart.png" "lka_diff_${DATE}_p50_summary.csv"; do
+            [ -f "$f" ] && ASSETS+=("$f")
+          done
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::warning::No diff-chart output files found to upload (the chart specifically is skipped whenever every matched stop_times row had delay_sec == 0). Not fatal - the GTFS release itself already succeeded."
+            exit 0
+          fi
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber \
+            || echo "::warning::gh release upload for the diff chart failed - not fatal, the GTFS release itself already succeeded."
