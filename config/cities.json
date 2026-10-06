@@ -1,7 +1,8 @@
 {
   "lodz": {
     "display_name": "Łódź",
-    "static_gtfs_url": "https://otwarte.miasto.lodz.pl/wp-content/uploads/2025/06/GTFS.zip"
+    "static_gtfs_url": "https://otwarte.miasto.lodz.pl/wp-content/uploads/2025/06/GTFS.zip",
+    "monthly_release": true
   },
   "poznan": {
     "display_name": "Poznań",

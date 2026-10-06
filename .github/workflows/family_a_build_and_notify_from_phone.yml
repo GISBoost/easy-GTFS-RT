@@ -165,6 +165,10 @@ jobs:
           STATIC_URL="$(jq -r --arg c "$CITY" '.[$c].static_gtfs_url // empty' config/cities.json)"
           echo "display_name=$DISPLAY_NAME" >> "$GITHUB_OUTPUT"
           echo "static_gtfs_url=$STATIC_URL" >> "$GITHUB_OUTPUT"
+          # Pilot flag (2026-10-06): true = publish into ONE release per city per month
+          # (tag `<city>-realized-YYYY-MM`, daily files uploaded into it) instead of one
+          # release per day. Absent/false keeps the legacy per-day release.
+          echo "monthly_release=$(jq -r --arg c "$CITY" '.[$c].monthly_release // false' config/cities.json)" >> "$GITHUB_OUTPUT"
 
           # Present only for cities whose GTFS has no single stable URL (e.g. GZM: ZTM
           # republishes ~11 ZIP resources daily under one CKAN dataset, each covering a
@@ -201,19 +205,46 @@ jobs:
         id: existing_release
         run: |
           set -euo pipefail
-          TAG="${CITY}-realized-${DATE}-phone"
-          if gh release view "$TAG" >/dev/null 2>err.log; then
+          # Day is "done" when: (monthly mode) the month's release holds this day's
+          # `${CITY}_meta_${DATE}.json` - uploaded LAST by Publish, so it doubles as a completion
+          # marker and an interrupted upload gets finished by a retry; or (legacy) the per-day
+          # release exists. A day already built under the legacy tag is never rebuilt either.
+          LEGACY_TAG="${CITY}-realized-${DATE}-phone"
+          MONTH_TAG="${CITY}-realized-${DATE:0:7}"
+          MONTHLY="${{ steps.city.outputs.monthly_release }}"
+          if gh release view "$LEGACY_TAG" >/dev/null 2>err.log; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release $TAG already exists - this day was already built (likely by an earlier manual run); skipping the rest of this run."
+            echo "Release $LEGACY_TAG already exists - this day was already built; skipping the rest of this run."
+            exit 0
+          elif ! grep -qi "not found" err.log; then
+            # Anything other than a plain "not found" (auth, rate limit, transient API error) is
+            # NOT safe to treat as "release doesn't exist" - fail loudly instead.
+            echo "::error::gh release view failed unexpectedly (not a plain \"not found\") - refusing to assume the release doesn't exist. Raw error follows:"
+            cat err.log >&2
+            exit 1
+          fi
+
+          if [ "$MONTHLY" != "true" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "tag=$LEGACY_TAG" >> "$GITHUB_OUTPUT"
+            echo "month_release_exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "tag=$MONTH_TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$MONTH_TAG" --json assets -q '.assets[].name' >names.txt 2>err.log; then
+            echo "month_release_exists=true" >> "$GITHUB_OUTPUT"
+            if grep -qx "${CITY}_meta_${DATE}.json" names.txt; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "Day ${DATE} already published in $MONTH_TAG - skipping the rest of this run."
+            else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            fi
           elif grep -qi "not found" err.log; then
+            echo "month_release_exists=false" >> "$GITHUB_OUTPUT"
             echo "exists=false" >> "$GITHUB_OUTPUT"
           else
-            # Anything other than a plain "not found" (auth, rate limit, transient API error) is
-            # NOT safe to treat as "release doesn't exist" - doing so could still hit a
-            # duplicate-tag conflict later in Publish if the release actually does exist. Fail
-            # loudly here instead, so the real cause shows up in the log and triggers the
-            # failure notification, rather than a confusing error several steps downstream.
-            echo "::error::gh release view failed unexpectedly (not a plain \"not found\") - refusing to assume the release doesn't exist. Raw error follows:"
+            echo "::error::gh release view $MONTH_TAG failed unexpectedly - refusing to guess. Raw error follows:"
             cat err.log >&2
             exit 1
           fi
@@ -511,11 +542,25 @@ jobs:
           # static feed downloads under a distinct, dated name instead of all colliding on the
           # generic local filename `static_gtfs.zip` once saved locally.
           cp static_gtfs.zip "${CITY}_static_gtfs_${DATE}.zip"
-          gh release create "${CITY}-realized-${DATE}-phone" \
-            "${CITY}_realized_${DATE}_p50.zip" "${CITY}_realized_${DATE}_p85.zip" \
-            "${CITY}_static_gtfs_${DATE}.zip" \
-            --title "${DISPLAY_NAME} — ${DATE} — realized GTFS (phone)" \
-            --notes "Automated build from phone-recorded data (TX-2/TX-3). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Actual recorded coverage: ${COVERAGE}. Static GTFS as downloaded and used for this day's match/build also attached, for comparison across days if the source agency's trip_id generation drifts (see FA-6). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
+          TAG="${{ steps.existing_release.outputs.tag }}"
+          NOTES="Automated build from phone-recorded data (TX-2/TX-3). P50/P85 corrected GTFS from ${DATE}'s recording (${COUNT} recording director$( [ "${COUNT}" = "1" ] && echo y || echo ies ) merged, ${MATCHED} observations matched, ${CORRECTED} segments corrected). Actual recorded coverage: ${COVERAGE}. Static GTFS as downloaded and used for this day's match/build also attached, for comparison across days if the source agency's trip_id generation drifts (see FA-6). Source: GISBoost/easy-OTP tools/family_a_reconstruction."
+          CORE=("${CITY}_realized_${DATE}_p50.zip" "${CITY}_realized_${DATE}_p85.zip" "${CITY}_static_gtfs_${DATE}.zip")
+
+          if [ "${{ steps.city.outputs.monthly_release }}" != "true" ]; then
+            gh release create "$TAG" "${CORE[@]}"               --title "${DISPLAY_NAME} — ${DATE} — realized GTFS (phone)"               --notes "$NOTES"
+            exit 0
+          fi
+
+          # Monthly mode: one release per city per month, daily files uploaded into it. The
+          # per-day facts that legacy mode keeps in the release body (and the manifest parses
+          # from it) live in `${CITY}_meta_${DATE}.json` instead, uploaded last = completion marker.
+          if [ "${{ steps.existing_release.outputs.month_release_exists }}" != "true" ]; then
+            gh release create "$TAG"               --title "${DISPLAY_NAME} — ${DATE:0:7} — realized GTFS (phone, monthly)"               --notes "Monthly collection of ${DISPLAY_NAME} realized GTFS built from phone-recorded GTFS-RT. One set of files per day; filenames carry the data date. Per-day details are in the *_meta_<date>.json files. Source: GISBoost/easy-OTP tools/family_a_reconstruction."               --latest=false
+          fi
+          gh release upload "$TAG" "${CORE[@]}" --clobber
+          jq -n --arg city "$CITY" --arg date "$DATE" --arg built_at "$(date -u +%FT%TZ)"                 --arg coverage "$COVERAGE"                 --argjson dirs "${COUNT:-0}" --argjson matched "${MATCHED:-0}" --argjson corrected "${CORRECTED:-0}"             '{city:$city,date:$date,source:"phone",built_at:$built_at,recording_dirs:$dirs,
+              observations_matched:$matched,segments_corrected:$corrected,coverage:$coverage}'             > "${CITY}_meta_${DATE}.json"
+          gh release upload "$TAG" "${CITY}_meta_${DATE}.json" --clobber
 
       - name: Install diff-chart dependencies
         # Own requirements.txt (tools/analysis, matplotlib only) - deliberately NOT merged into
@@ -572,7 +617,7 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
-          TAG="${CITY}-realized-${DATE}-phone"
+          TAG="${{ steps.existing_release.outputs.tag }}"
           ASSETS=()
           for f in "${CITY}_diff_${DATE}_p50_chart.png" "${CITY}_diff_${DATE}_p50_summary.csv"; do
             [ -f "$f" ] && ASSETS+=("$f")
@@ -622,7 +667,7 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
-          TAG="${CITY}-realized-${DATE}-phone"
+          TAG="${{ steps.existing_release.outputs.tag }}"
           ASSET="${CITY}_tidy_${DATE}.csv.gz"
           if [ ! -f "$ASSET" ]; then
             echo "::warning::No tidy-table output file found to upload. Not fatal - the GTFS release itself already succeeded."
